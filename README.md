@@ -85,6 +85,13 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   * Power off uses `systemctl poweroff`, falling back to passwordless `sudo`
     (the same rule the USB eject relies on); if both are refused you get a
     POWER OFF FAILED banner rather than a dead button
+  * **WI-FI** opens a full-screen page: connection status with IP address,
+    the networks in range (strongest first, tagged CONNECTED / SAVED / OPEN /
+    ENTERPRISE), RESCAN and PREV/NEXT paging. Tap a network to join it —
+    open and saved networks connect straight away, a new secured one asks
+    for its password on the **on-screen keyboard** (now with SHIFT and a
+    ?123 punctuation layer, shared with the Search page). Tap the connected
+    network twice to forget it. Driven through NetworkManager's `nmcli`
 
 ## Requirements
 
@@ -146,7 +153,19 @@ echo 'youruser ALL=(ALL) NOPASSWD: /usr/bin/umount /media/USBA, /usr/bin/umount 
   | sudo tee /etc/sudoers.d/mixxx-usb-eject
 ```
 
-### 5. Controller
+### 5. Wi-Fi permission (only if WI-FI reports it is not authorised)
+
+The Wi-Fi page talks to NetworkManager through `nmcli`. On Raspberry Pi OS the
+login user is in the `netdev` group and polkit lets it manage connections, so
+nothing is needed. If connecting or forgetting a network fails with a
+permission error in the Mixxx log, add a passwordless `sudo` rule and Mixxx
+will retry through it:
+
+```bash
+echo 'youruser ALL=(ALL) NOPASSWD: /usr/bin/nmcli' | sudo tee /etc/sudoers.d/mixxx-wifi
+```
+
+### 6. Controller
 
 Plug in the DDJ-400 and enable it in *Preferences → Controllers* with the
 built-in **Pioneer DDJ-400** mapping (the patched `mixxx-data` package contains

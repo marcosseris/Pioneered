@@ -88,6 +88,7 @@ jobs:
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/load-returns-to-overview.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/rekordbox-playlist-order.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/rekordbox-unicode-paths.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/wifi-settings.patch"
           # Version the build after the release tag (v2.5.0-r20 -> +usbbrowse.r20.1)
           # so deb versions keep increasing with the release series.
           SUFFIX="${GITHUB_REF_NAME##*-}"

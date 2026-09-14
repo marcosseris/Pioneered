@@ -686,6 +686,7 @@ WBeatSpinBox::up-button {
   margin: 6px 10px;
 }
 
+#SettingsPanel #SettingsWifi,
 #SettingsPanel #SettingsPowerOff,
 #SettingsPanel #SettingsRestart,
 #SettingsPanel #SettingsBack {
@@ -710,6 +711,7 @@ WBeatSpinBox::up-button {
    per-button rules above, silently doing nothing. The armed faces get no
    press state -- the second tap commits, and it should look committed, not
    like another arming step. */
+#SettingsPanel #SettingsWifi:pressed,
 #SettingsPanel #SettingsPowerOff:pressed,
 #SettingsPanel #SettingsRestart:pressed,
 #SettingsPanel #SettingsBack:pressed {
@@ -823,4 +825,139 @@ WBeatSpinBox::up-button {
       stop:0 #c62d54, stop:1 #a62446);
   border: 1px solid #b6294c;
   color: white;
+}
+
+/* SHIFT and ?123 are latches: lit while on. SHIFT is one-shot (drops after
+   the next key), ?123 stays until tapped again, hence ABC on its lit face. */
+#KbShift, #KbSymbols {
+  color: #aaaaaa;
+}
+
+#KbShift[value="1"], #KbSymbols[value="1"] {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #c62d54, stop:1 #a62446);
+  border: 1px solid #b6294c;
+  color: white;
+}
+
+/************************************************************************/
+/*     Wi-Fi page (settings menu > WI-FI)                               */
+/************************************************************************/
+
+/* Full-screen sibling of the settings menu inside SettingsOverlay; opaque
+   because unlike the menu there is nothing worth glimpsing beneath a
+   network list. */
+#WifiPage {
+  background-color: #16161a;
+}
+
+#WifiHeader {
+  background-color: #1a1a20;
+}
+
+#WifiTitle {
+  color: #c3d541;
+  font-size: 18px;
+  font-weight: bold;
+  qproperty-alignment: AlignCenter;
+}
+
+#WifiBack, #WifiRescan, #WifiPrev, #WifiNext {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #16161a, stop:1 black);
+  border: 2px solid #4a4a52;
+  border-radius: 4px;
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  margin: 6px 8px;
+}
+
+#WifiBack:pressed, #WifiRescan:pressed, #WifiPrev:pressed, #WifiNext:pressed {
+  background-color: #1f1f26;
+  border: 2px solid #6a6a76;
+  color: white;
+}
+
+/* The C++ panel (WWifiPanel). Its children are plain Qt widgets, so they
+   are selected by type + id; WPushButton rules do not reach them. */
+#WifiPanel {
+  background-color: transparent;
+  margin: 2px 12px;
+}
+
+#WifiStatus {
+  color: #c3d541;
+  font-size: 16px;
+  font-weight: bold;
+  padding: 4px;
+}
+
+QPushButton#WifiRow {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #20202a, stop:1 #16161c);
+  border: 1px solid #3c3c46;
+  border-radius: 4px;
+  color: #e6e6e6;
+  font-size: 17px;
+  font-weight: bold;
+  padding: 0 14px;
+  text-align: left;
+}
+
+QPushButton#WifiRow:pressed {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #c62d54, stop:1 #a62446);
+  border: 1px solid #b6294c;
+  color: white;
+}
+
+/* The network we are on: green, like a Camelot-compatible key. */
+QPushButton#WifiRow[rowstate="connected"] {
+  border: 1px solid #c3d541;
+  color: #c3d541;
+}
+
+/* Tap-again-to-forget: the same red the menu's armed POWER OFF wears. */
+QPushButton#WifiRow[rowstate="armed"] {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #c62d54, stop:1 #a62446);
+  border: 1px solid white;
+  color: white;
+}
+
+#WifiHint, #WifiEntryHint {
+  color: #8f8f99;
+  font-size: 13px;
+  padding: 2px 8px;
+}
+
+#WifiHint[error="true"], #WifiEntryHint[error="true"] {
+  color: #ff8fa3;
+}
+
+#WifiEntryTitle {
+  color: #c3d541;
+  font-size: 16px;
+  font-weight: bold;
+  padding-top: 8px;
+}
+
+/* The password as typed, in the clear: on a touchscreen with no other
+   feedback, seeing it is the only way to catch a wrong key. */
+#WifiEntryText {
+  background-color: #0d0d10;
+  border: 1px solid #45454f;
+  border-radius: 3px;
+  color: #e6e6e6;
+  font-size: 22px;
+  font-weight: bold;
+  margin: 4px 60px;
+  padding: 8px 12px;
+}
+
+#WifiEntryText[placeholder="true"] {
+  color: #5a5a66;
+  font-size: 15px;
+  font-weight: normal;
 }

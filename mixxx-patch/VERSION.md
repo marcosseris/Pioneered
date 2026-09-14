@@ -328,3 +328,40 @@
     Skin side: `skin.xml` banner + `style.qss`. Pi side: `pi/usb-mount.sh`,
     and `pi/update-pioneered.sh` now installs the `pi/` layer on every update
     so mount-script fixes actually reach the unit.
+20. `wifi-settings.patch` (added 2026-09-14, r28) — WI-FI page in the
+    settings menu, driven through NetworkManager's `nmcli`. New widget
+    `src/widget/wwifipanel.{h,cpp}` (skin tag `<WifiPanel>`, registered in
+    `LegacySkinParser::parseWifiPanel`, added to `CMakeLists.txt`) holds the
+    dynamic part: status line with IP, up to N rows of networks (one per
+    SSID, strongest first, CONNECTED / SAVED / OPEN / ENTERPRISE tags, signal
+    bars), paging, and the password being typed. Every nmcli call is an
+    async `QProcess` (a scan takes seconds; the GUI thread never waits),
+    parsed from `-t --escape yes` output with a backslash-aware splitter,
+    and retried through `sudo -n nmcli` when stderr says polkit refused.
+    Connect is `nmcli -w 30 dev wifi connect <ssid> [password <pw>]` for
+    saved, open and new networks alike; a failed attempt deletes the
+    half-made profile so it cannot masquerade as SAVED, and a saved network
+    whose stored password fails drops you into the password page with a
+    hint. Tapping the connected network arms "TAP AGAIN TO FORGET" (5 s
+    disarm, same pattern as POWER OFF). `LibraryControl` owns the controls
+    (`wifi_open/back/rescan/prev/next/connect` presses, `wifi_page` and
+    `wifi_entry` state) and forwards them to the bound panel via
+    `Library::bindWifiPanel`, mirroring the search box; `menu_disarm` also
+    closes the page so the cog always reopens on the main menu. The
+    on-screen keyboard is generalised in `setupOnScreenKeyboard(prefix …)`:
+    one control set per prefix (`search`, `wifi`), each with a one-shot
+    `_shift` latch (drops on the shifted key's release), a `_symbols`
+    latch, and punctuation keys named `_key_c<codepoint>` since the
+    characters cannot name a ConfigKey. Both latches are TOGGLE-mode
+    controls so a skin PushButton flips them per tap. `search_clear` joins
+    `clear_search` so `keyboard.xml` can be one template. Touches
+    `src/library/librarycontrol.{h,cpp}`, `src/library/library.{h,cpp}`,
+    `src/skin/legacy/legacyskinparser.{h,cpp}`, `CMakeLists.txt`, plus the
+    two new files. Skin side: `keyboard.xml` and `templates/kb_key.xml` are
+    parametrised (`kb_prefix`, `kb_done_control`, `kb_done_label`; two faces
+    per key bound to the shift latch; letter/symbol layers bound to the
+    symbols latch), `search.xml` passes the search set (keyboard now 180f
+    for 5 rows), `settings.xml` grows a WI-FI row (panel 354f) and wraps the
+    menu in `SettingsMenuLayer` (hidden while `wifi_page`), new `wifi.xml`
+    page, `style.qss` styles the page and the plain-Qt rows inside the
+    panel by `QPushButton#WifiRow[rowstate=…]`.

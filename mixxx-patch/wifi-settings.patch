@@ -1,0 +1,1364 @@
+Description: Wi-Fi page in the on-screen settings menu (NetworkManager/nmcli)
+ The XDJ400 has no keyboard and no desktop: joining a new Wi-Fi network
+ meant an ssh session, which needs the network you are trying to join. The
+ settings menu (cog) gains a WI-FI entry that opens a full-screen page:
+ connection status with IP address, the networks in range (strongest
+ first, one row per SSID, CONNECTED / SAVED / OPEN / ENTERPRISE tags),
+ RESCAN and paging. Tapping a network connects -- straight away for open
+ and saved ones, via a password page for new secured ones. Tapping the
+ connected network arms "TAP AGAIN TO FORGET", the same tap-again-to-
+ confirm the menu's POWER OFF uses.
+ .
+ New widget WWifiPanel (src/widget/wwifipanel.{h,cpp}, skin tag
+ <WifiPanel>) holds the dynamic part: it drives NetworkManager through
+ nmcli, always asynchronously (a scan takes seconds and the GUI thread
+ must never wait on it), retrying through passwordless sudo when polkit
+ refuses the session. Everything around it -- BACK, RESCAN, PREV/NEXT,
+ the keyboard -- is ordinary skin buttons pressing [Library],wifi_*
+ controls that LibraryControl forwards to the bound panel, exactly how
+ the search box receives the search keyboard. wifi_page / wifi_entry are
+ the two state controls the skin reads (page shown; password entry open,
+ so the keyboard is up). menu_disarm (cog, scrim, BACK) also closes the
+ page, so the menu always reopens on its main screen.
+ .
+ The on-screen keyboard is generalised for this: setupOnScreenKeyboard()
+ creates one control set per prefix ("search", "wifi"), and both gain a
+ one-shot shift latch and a punctuation layer (<prefix>_key_c<codepoint>,
+ since the characters themselves cannot name a control) -- a Wi-Fi
+ password needs capitals and symbols, a track search does not mind them.
+ search_clear joins clear_search so keyboard.xml can be one template.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1329,6 +1329,7 @@
+   src/widget/wwidget.cpp
+   src/widget/wwidgetgroup.cpp
+   src/widget/wwidgetstack.cpp
++  src/widget/wwifipanel.cpp
+ )
+ set(MIXXX_COMMON_PRECOMPILED_HEADER
+   src/util/assert.h
+diff --git a/src/library/librarycontrol.h b/src/library/librarycontrol.h
+--- a/src/library/librarycontrol.h
++++ b/src/library/librarycontrol.h
+@@ -4,6 +4,7 @@
+ #include <QObject>
+ #include <QPersistentModelIndex>
+ #include <QTimer>
++#include <functional>
+ #include <memory>
+ #include <vector>
+ 
+@@ -18,6 +19,7 @@
+ class WLibrary;
+ class WLibrarySidebar;
+ class WSearchLineEdit;
++class WWifiPanel;
+ class KeyboardEventFilter;
+ 
+ class LoadToGroupController : public QObject {
+@@ -48,6 +50,7 @@
+     void bindLibraryWidget(WLibrary* pLibrary, KeyboardEventFilter* pKeyboard);
+     void bindSidebarWidget(WLibrarySidebar* pLibrarySidebar);
+     void bindSearchboxWidget(WSearchLineEdit* pSearchbox);
++    void bindWifiPanel(WWifiPanel* pPanel);
+     // Give the keyboard focus to one of the library widgets
+     void setLibraryFocus(FocusWidget newFocusWidget);
+     FocusWidget getFocusedWidget();
+@@ -65,6 +68,7 @@
+     void libraryWidgetDeleted();
+     void sidebarWidgetDeleted();
+     void searchboxWidgetDeleted();
++    void wifiPanelDeleted();
+ 
+     // Update m_focusedWidget and m_pFocusedWidgetCO
+     void slotFocusedWidgetChanged(QWidget* oldW, QWidget* newW);
+@@ -288,11 +292,46 @@
+     std::unique_ptr<ControlPushButton> m_pClearSearch;
+     std::unique_ptr<ControlPushButton> m_pDeleteSearchQuery;
+ 
+-    // On-screen-keyboard search input: one push control per typeable
+-    // character, plus space and backspace. Clearing reuses clear_search.
+-    std::vector<std::unique_ptr<ControlPushButton>> m_searchKeys;
+-    std::unique_ptr<ControlPushButton> m_pSearchSpace;
+-    std::unique_ptr<ControlPushButton> m_pSearchBackspace;
++    // On-screen keyboard. keyboard.xml is one layout instantiated per text
++    // target with a control prefix: "search" drives the search box, "wifi"
++    // the Wi-Fi password entry. Per prefix: one push control per key
++    // (<prefix>_key_<char>, punctuation as <prefix>_key_c<codepoint>), plus
++    // _space, _backspace, _clear, and the _shift / _symbols latches the
++    // skin's shift and ?123 keys toggle. See setupOnScreenKeyboard().
++    struct OnScreenKeyboard {
++        std::vector<std::unique_ptr<ControlPushButton>> keys;
++        std::unique_ptr<ControlPushButton> space;
++        std::unique_ptr<ControlPushButton> backspace;
++        std::unique_ptr<ControlPushButton> clear;
++        std::unique_ptr<ControlPushButton> shift;
++        std::unique_ptr<ControlPushButton> symbols;
++        // Set when a key was typed with shift on; shift drops on that key's
++        // release (one-shot, like a phone keyboard).
++        bool shiftConsumed = false;
++    };
++    void setupOnScreenKeyboard(OnScreenKeyboard* pOsk,
++            const QString& prefix,
++            std::function<void(const QString&)> onText,
++            std::function<void()> onBackspace,
++            std::function<void()> onClear);
++    OnScreenKeyboard m_searchOsk;
++    OnScreenKeyboard m_wifiOsk;
++
++    // Pioneered Wi-Fi page (WI-FI in the settings menu). wifi_open /
++    // wifi_back / wifi_rescan / wifi_prev / wifi_next / wifi_connect are
++    // pressed by the skin; wifi_page (page shown) and wifi_entry (password
++    // entry open, so the keyboard is up) are state the skin reads. The page
++    // body is a WWifiPanel widget bound via bindWifiPanel().
++    void openWifiPage();
++    void closeWifiPage();
++    std::unique_ptr<ControlPushButton> m_pWifiOpen;
++    std::unique_ptr<ControlPushButton> m_pWifiBack;
++    std::unique_ptr<ControlPushButton> m_pWifiRescan;
++    std::unique_ptr<ControlPushButton> m_pWifiPrev;
++    std::unique_ptr<ControlPushButton> m_pWifiNext;
++    std::unique_ptr<ControlPushButton> m_pWifiConnect;
++    std::unique_ptr<ControlPushButton> m_pWifiPage;
++    std::unique_ptr<ControlPushButton> m_pWifiEntry;
+ 
+     // Font sizes
+     std::unique_ptr<ControlPushButton> m_pFontSizeIncrement;
+@@ -313,6 +352,7 @@
+     WLibrary* m_pLibraryWidget;
+     WLibrarySidebar* m_pSidebarWidget;
+     WSearchLineEdit* m_pSearchbox;
++    WWifiPanel* m_pWifiPanel = nullptr;
+ 
+     // Other variables
+     ControlProxy m_numDecks;
+diff --git a/src/library/librarycontrol.cpp b/src/library/librarycontrol.cpp
+--- a/src/library/librarycontrol.cpp
++++ b/src/library/librarycontrol.cpp
+@@ -23,6 +23,7 @@
+ #include "widget/wlibrarysidebar.h"
+ #include "widget/wsearchlineedit.h"
+ #include "widget/wtracktableview.h"
++#include "widget/wwifipanel.h"
+ 
+ namespace {
+ const QString kAppGroup = QStringLiteral("[App]");
+@@ -573,45 +574,93 @@
+                 }
+             });
+ 
+-    // On-screen-keyboard search controls (drive the bound searchbox). Guard
+-    // like the other search handlers; act only on the press edge (value > 0).
+-    const QString kSearchKeyChars =
+-            QStringLiteral("abcdefghijklmnopqrstuvwxyz0123456789");
+-    for (const QChar& ch : kSearchKeyChars) {
+-        auto pKey = std::make_unique<ControlPushButton>(
+-                ConfigKey(QStringLiteral("[Library]"),
+-                        QStringLiteral("search_key_%1").arg(ch)));
+-        const QString s(ch);
+-        connect(pKey.get(),
++    // On-screen keyboard: keyboard.xml is instantiated once per text target
++    // with a control prefix -- "search" drives the search box, "wifi" the
++    // Wi-Fi password entry. See setupOnScreenKeyboard().
++    setupOnScreenKeyboard(
++            &m_searchOsk,
++            QStringLiteral("search"),
++            [this](const QString& text) { appendToSearch(text); },
++            [this] { backspaceSearch(); },
++            [this] {
++                if (m_pSearchbox) {
++                    m_pSearchbox->slotClearSearch();
++                }
++            });
++    setupOnScreenKeyboard(
++            &m_wifiOsk,
++            QStringLiteral("wifi"),
++            [this](const QString& text) {
++                if (m_pWifiPanel) {
++                    m_pWifiPanel->appendText(text);
++                }
++            },
++            [this] {
++                if (m_pWifiPanel) {
++                    m_pWifiPanel->backspace();
++                }
++            },
++            [this] {
++                if (m_pWifiPanel) {
++                    m_pWifiPanel->clearText();
++                }
++            });
++
++    // Pioneered Wi-Fi page (WI-FI in the settings menu). The skin's buttons
++    // press wifi_open / wifi_back / wifi_rescan / wifi_prev / wifi_next /
++    // wifi_connect (1 on press, 0 on release); wifi_page and wifi_entry are
++    // state the skin reads to show the page and the keyboard. The page body
++    // is a WWifiPanel bound via bindWifiPanel(); until the skin binds one
++    // the controls exist but do nothing, so a skin without the page is
++    // unaffected.
++    m_pWifiPage = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "wifi_page"));
++    m_pWifiPage->setStates(2);
++    m_pWifiEntry = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "wifi_entry"));
++    m_pWifiEntry->setStates(2);
++    const auto makeWifiAction = [this](const char* item,
++                                        std::function<void()> action) {
++        auto pControl = std::make_unique<ControlPushButton>(
++                ConfigKey("[Library]", item));
++        connect(pControl.get(),
+                 &ControlPushButton::valueChanged,
+                 this,
+-                [this, s](double value) {
++                [action](double value) {
+                     if (value > 0.0) {
+-                        appendToSearch(s);
++                        action();
+                     }
+                 });
+-        m_searchKeys.push_back(std::move(pKey));
+-    }
+-    m_pSearchSpace = std::make_unique<ControlPushButton>(
+-            ConfigKey(QStringLiteral("[Library]"), QStringLiteral("search_space")));
+-    connect(m_pSearchSpace.get(),
+-            &ControlPushButton::valueChanged,
+-            this,
+-            [this](double value) {
+-                if (value > 0.0) {
+-                    appendToSearch(QStringLiteral(" "));
+-                }
+-            });
+-    m_pSearchBackspace = std::make_unique<ControlPushButton>(
+-            ConfigKey(QStringLiteral("[Library]"), QStringLiteral("search_backspace")));
+-    connect(m_pSearchBackspace.get(),
+-            &ControlPushButton::valueChanged,
+-            this,
+-            [this](double value) {
+-                if (value > 0.0) {
+-                    backspaceSearch();
+-                }
+-            });
++        return pControl;
++    };
++    m_pWifiOpen = makeWifiAction("wifi_open", [this] { openWifiPage(); });
++    m_pWifiBack = makeWifiAction("wifi_back", [this] {
++        if (m_pWifiPanel) {
++            m_pWifiPanel->back(); // leaves password entry, else closeRequested
++        } else {
++            closeWifiPage();
++        }
++    });
++    m_pWifiRescan = makeWifiAction("wifi_rescan", [this] {
++        if (m_pWifiPanel) {
++            m_pWifiPanel->rescan();
++        }
++    });
++    m_pWifiPrev = makeWifiAction("wifi_prev", [this] {
++        if (m_pWifiPanel) {
++            m_pWifiPanel->prevPage();
++        }
++    });
++    m_pWifiNext = makeWifiAction("wifi_next", [this] {
++        if (m_pWifiPanel) {
++            m_pWifiPanel->nextPage();
++        }
++    });
++    m_pWifiConnect = makeWifiAction("wifi_connect", [this] {
++        if (m_pWifiPanel) {
++            m_pWifiPanel->confirmEntry();
++        }
++    });
+ 
+     // Show the track context menu for selected tracks, or hide it
+     // if it is the current active window
+@@ -721,6 +770,135 @@
+     m_pSearchbox->slotBackspaceSearch();
+ }
+ 
++void LibraryControl::setupOnScreenKeyboard(OnScreenKeyboard* pOsk,
++        const QString& prefix,
++        std::function<void(const QString&)> onText,
++        std::function<void()> onBackspace,
++        std::function<void()> onClear) {
++    const auto makeControl = [&prefix](const QString& item) {
++        return std::make_unique<ControlPushButton>(ConfigKey(
++                QStringLiteral("[Library]"),
++                QStringLiteral("%1_%2").arg(prefix, item)));
++    };
++    // Shift and symbols are latches the skin's shift / ?123 keys toggle.
++    // TOGGLE mode is what makes a skin PushButton flip them per tap instead
++    // of holding them only while the finger is down.
++    pOsk->shift = makeControl(QStringLiteral("shift"));
++    pOsk->shift->setStates(2);
++    pOsk->shift->setButtonMode(ControlPushButton::TOGGLE);
++    pOsk->symbols = makeControl(QStringLiteral("symbols"));
++    pOsk->symbols->setStates(2);
++    pOsk->symbols->setButtonMode(ControlPushButton::TOGGLE);
++    ControlPushButton* pShift = pOsk->shift.get();
++
++    // Act on the press edge only (value > 0); the release drops a consumed
++    // shift, so the shifted key face stays under the finger until it lifts.
++    const auto addKey = [&](const QString& item, const QString& text) {
++        auto pKey = makeControl(item);
++        connect(pKey.get(),
++                &ControlPushButton::valueChanged,
++                this,
++                [pOsk, pShift, text, onText](double value) {
++                    if (value > 0.0) {
++                        if (pShift->get() > 0.0) {
++                            onText(text.toUpper());
++                            pOsk->shiftConsumed = true;
++                        } else {
++                            onText(text);
++                        }
++                    } else if (pOsk->shiftConsumed) {
++                        pOsk->shiftConsumed = false;
++                        pShift->setAndConfirm(0.0);
++                    }
++                });
++        pOsk->keys.push_back(std::move(pKey));
++    };
++    // Letters and digits: [Library],<prefix>_key_<char>
++    const QString kAlnum = QStringLiteral("abcdefghijklmnopqrstuvwxyz0123456789");
++    for (const QChar& ch : kAlnum) {
++        addKey(QStringLiteral("key_%1").arg(ch), QString(ch));
++    }
++    // Punctuation: [Library],<prefix>_key_c<codepoint>. The characters
++    // themselves cannot name a control (',' splits group from item in a
++    // ConfigKey), so the skin's symbol keys carry the decimal code point.
++    const QString kSymbols = QStringLiteral("!@#$%^&*()~-_=+[]{};:`'\",.<>/?\\|");
++    for (const QChar& ch : kSymbols) {
++        addKey(QStringLiteral("key_c%1").arg(ch.unicode()), QString(ch));
++    }
++    pOsk->space = makeControl(QStringLiteral("space"));
++    connect(pOsk->space.get(),
++            &ControlPushButton::valueChanged,
++            this,
++            [onText](double value) {
++                if (value > 0.0) {
++                    onText(QStringLiteral(" "));
++                }
++            });
++    pOsk->backspace = makeControl(QStringLiteral("backspace"));
++    connect(pOsk->backspace.get(),
++            &ControlPushButton::valueChanged,
++            this,
++            [onBackspace](double value) {
++                if (value > 0.0) {
++                    onBackspace();
++                }
++            });
++    pOsk->clear = makeControl(QStringLiteral("clear"));
++    connect(pOsk->clear.get(),
++            &ControlPushButton::valueChanged,
++            this,
++            [onClear](double value) {
++                if (value > 0.0) {
++                    onClear();
++                }
++            });
++}
++
++void LibraryControl::bindWifiPanel(WWifiPanel* pPanel) {
++    if (m_pWifiPanel) {
++        disconnect(m_pWifiPanel, nullptr, this, nullptr);
++    }
++    m_pWifiPanel = pPanel;
++    connect(m_pWifiPanel,
++            &WWifiPanel::destroyed,
++            this,
++            &LibraryControl::wifiPanelDeleted);
++    connect(m_pWifiPanel,
++            &WWifiPanel::entryModeChanged,
++            this,
++            [this](bool entry) {
++                m_pWifiEntry->setAndConfirm(entry ? 1.0 : 0.0);
++            });
++    connect(m_pWifiPanel,
++            &WWifiPanel::closeRequested,
++            this,
++            &LibraryControl::closeWifiPage);
++}
++
++void LibraryControl::wifiPanelDeleted() {
++    m_pWifiPanel = nullptr;
++}
++
++void LibraryControl::openWifiPage() {
++    // Opening the page clears any armed confirm on the menu underneath, so
++    // nothing is left one tap from a shutdown behind the Wi-Fi list.
++    m_disarmTimer.stop();
++    m_pArmPower->setAndConfirm(0.0);
++    m_pArmRestart->setAndConfirm(0.0);
++    m_pWifiPage->setAndConfirm(1.0);
++    if (m_pWifiPanel) {
++        m_pWifiPanel->open();
++    }
++}
++
++void LibraryControl::closeWifiPage() {
++    if (m_pWifiPanel) {
++        m_pWifiPanel->close(); // also leaves password entry
++    }
++    m_pWifiEntry->setAndConfirm(0.0);
++    m_pWifiPage->setAndConfirm(0.0);
++}
++
+ void LibraryControl::maybeCreateGroupController(const QString& group) {
+     if (m_loadToGroupControllers.find(group) == m_loadToGroupControllers.end()) {
+         m_loadToGroupControllers.emplace(group, std::make_unique<LoadToGroupController>(this, group));
+@@ -1513,6 +1691,9 @@
+     m_disarmTimer.stop();
+     m_pArmPower->setAndConfirm(0.0);
+     m_pArmRestart->setAndConfirm(0.0);
++    // The cog, BACK and the scrim all press menu_disarm: whatever page the
++    // menu was on, it reopens on the main menu, not inside the Wi-Fi list.
++    closeWifiPage();
+ }
+ 
+ void LibraryControl::triggerPowerOff() {
+diff --git a/src/library/library.h b/src/library/library.h
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -30,6 +30,7 @@
+ class SidebarModel;
+ class TrackCollectionManager;
+ class WSearchLineEdit;
++class WWifiPanel;
+ class WLibrarySidebar;
+ class WLibrary;
+ class QAbstractItemModel;
+@@ -67,6 +68,7 @@
+             AnalyzerModeFlags modeFlags) const;
+ 
+     void bindSearchboxWidget(WSearchLineEdit* pSearchboxWidget);
++    void bindWifiPanel(WWifiPanel* pWifiPanel);
+     void bindSidebarWidget(WLibrarySidebar* sidebarWidget);
+     void bindLibraryWidget(WLibrary* libraryWidget,
+                     KeyboardEventFilter* pKeyboard);
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -330,6 +330,10 @@
+             &LibraryControl::setLibraryFocus);
+ }
+ 
++void Library::bindWifiPanel(WWifiPanel* pWifiPanel) {
++    m_pLibraryControl->bindWifiPanel(pWifiPanel);
++}
++
+ void Library::bindSidebarWidget(WLibrarySidebar* pSidebarWidget) {
+     m_pLibraryControl->bindSidebarWidget(pSidebarWidget);
+ 
+diff --git a/src/skin/legacy/legacyskinparser.h b/src/skin/legacy/legacyskinparser.h
+--- a/src/skin/legacy/legacyskinparser.h
++++ b/src/skin/legacy/legacyskinparser.h
+@@ -117,6 +117,7 @@
+     // Library widgets.
+     QWidget* parseTableView(const QDomElement& node);
+     QWidget* parseSearchBox(const QDomElement& node);
++    QWidget* parseWifiPanel(const QDomElement& node);
+     QWidget* parseLibrary(const QDomElement& node);
+     QWidget* parseLibrarySidebar(const QDomElement& node);
+     QWidget* parseBattery(const QDomElement& node);
+diff --git a/src/skin/legacy/legacyskinparser.cpp b/src/skin/legacy/legacyskinparser.cpp
+--- a/src/skin/legacy/legacyskinparser.cpp
++++ b/src/skin/legacy/legacyskinparser.cpp
+@@ -65,6 +65,7 @@
+ #include "widget/wrecordingduration.h"
+ #include "widget/wscrollable.h"
+ #include "widget/wsearchlineedit.h"
++#include "widget/wwifipanel.h"
+ #include "widget/wsingletoncontainer.h"
+ #include "widget/wsizeawarestack.h"
+ #include "widget/wskincolor.h"
+@@ -577,6 +578,8 @@
+         result = wrapWidget(parseCoverArt(node));
+     } else if (nodeName == "SearchBox") {
+         result = wrapWidget(parseSearchBox(node));
++    } else if (nodeName == "WifiPanel") {
++        result = wrapWidget(parseWifiPanel(node));
+     } else if (nodeName == "WidgetGroup") {
+         result = wrapWidget(parseWidgetGroup(node));
+     } else if (nodeName == "TrackWidgetGroup") {
+@@ -1469,6 +1472,20 @@
+     return pLineEditSearch;
+ }
+ 
++QWidget* LegacySkinParser::parseWifiPanel(const QDomElement& node) {
++    // Pioneered: body of the Wi-Fi settings page (network list, status,
++    // password being typed). The buttons and keyboard around it are plain
++    // skin widgets; LibraryControl forwards their controls to this panel
++    // once it is bound.
++    WWifiPanel* pPanel = new WWifiPanel(m_pParent);
++    commonWidgetSetup(node, pPanel, false);
++    pPanel->setup(node, *m_pContext);
++
++    m_pLibrary->bindWifiPanel(pPanel);
++
++    return pPanel;
++}
++
+ QWidget* LegacySkinParser::parseCoverArt(const QDomElement& node) {
+     QString group = lookupNodeGroup(node);
+     BaseTrackPlayer* pPlayer = nullptr;
+diff --git a/src/widget/wwifipanel.h b/src/widget/wwifipanel.h
+new file mode 100644
+--- /dev/null
++++ b/src/widget/wwifipanel.h
+@@ -0,0 +1,108 @@
++#pragma once
++
++#include <QList>
++#include <QString>
++#include <QStringList>
++#include <QTimer>
++#include <QWidget>
++#include <functional>
++
++#include "widget/wbasewidget.h"
++
++class QDomNode;
++class QLabel;
++class QPushButton;
++class SkinContext;
++
++/// Pioneered Wi-Fi settings page body: the dynamic part (network list,
++/// connection status, the password being typed) of the Wi-Fi page reached
++/// from the settings menu. Everything static around it -- BACK, RESCAN,
++/// paging, the on-screen keyboard -- is ordinary skin buttons pressing
++/// [Library],wifi_* controls that LibraryControl forwards here (see
++/// LibraryControl::bindWifiPanel), the same way the search box receives the
++/// search keyboard. The widget in turn reports the two facts the skin needs
++/// to lay itself out (password entry open or not, page done) as signals.
++///
++/// Networking goes through NetworkManager's nmcli, always asynchronously:
++/// a scan can take several seconds and the GUI thread must never wait on it.
++class WWifiPanel : public QWidget, public WBaseWidget {
++    Q_OBJECT
++  public:
++    explicit WWifiPanel(QWidget* pParent = nullptr);
++    ~WWifiPanel() override = default;
++
++    void setup(const QDomNode& node, const SkinContext& context);
++
++    // Entry points driven by LibraryControl from the [Library],wifi_* controls.
++    void open();         // page shown: refresh status and scan
++    void close();        // page hidden: leave entry, drop pending results
++    void back();         // BACK: leaves password entry, else asks to close
++    void rescan();
++    void prevPage();
++    void nextPage();
++    void confirmEntry(); // CONNECT with the typed password
++    void appendText(const QString& text);
++    void backspace();
++    void clearText();
++
++  signals:
++    void entryModeChanged(bool entry);
++    void closeRequested();
++
++  private:
++    struct Network {
++        QString ssid;
++        int signal = 0;
++        bool secured = false;
++        bool enterprise = false;
++        bool inUse = false;
++        bool saved = false;
++    };
++    using NmcliDone = std::function<void(
++            int exitCode, const QString& out, const QString& err)>;
++
++    void runNmcli(const QStringList& args,
++            NmcliDone done,
++            bool sudoRetry = false,
++            bool viaSudo = false);
++    static QStringList splitTerse(const QString& line);
++    static QString signalBars(int signal);
++
++    void refreshStatus();
++    void startScan();
++    void listNetworks(int generation, const QString& savedOut, bool rescan);
++    void parseScan(const QString& savedOut, const QString& scanOut);
++    void renderList();
++    void rowTapped(int row);
++    void beginEntry(const Network& network, const QString& hint);
++    void endEntry();
++    void startConnect(const Network& network, const QString& password);
++    void forgetNetwork(const QString& ssid);
++    void setHint(const QString& text, bool error = false);
++    void setEntryHint(const QString& text, bool error = false);
++    void setRowState(QPushButton* pRow, const char* state);
++    void refreshEntryText();
++    static void restyle(QWidget* pWidget);
++
++    QLabel* m_pStatus;
++    QWidget* m_pListBox;
++    QList<QPushButton*> m_rows;
++    QLabel* m_pHint;
++    QWidget* m_pEntryBox;
++    QLabel* m_pEntryTitle;
++    QLabel* m_pEntryText;
++    QLabel* m_pEntryHint;
++
++    QList<Network> m_networks;
++    int m_page = 0;
++    bool m_open = false;
++    bool m_entry = false;
++    bool m_busy = false; // a connect or forget is in flight
++    int m_scanGeneration = 0;
++    QString m_entryText;
++    Network m_entryNetwork;
++    QString m_armedForget; // SSID whose row reads "TAP AGAIN TO FORGET"
++    QTimer m_forgetDisarmTimer;
++    QTimer m_statusTimer;
++    QString m_wifiDevice;
++};
+diff --git a/src/widget/wwifipanel.cpp b/src/widget/wwifipanel.cpp
+new file mode 100644
+--- /dev/null
++++ b/src/widget/wwifipanel.cpp
+@@ -0,0 +1,738 @@
++#include "widget/wwifipanel.h"
++
++#include <QLabel>
++#include <QProcess>
++#include <QPushButton>
++#include <QSet>
++#include <QStyle>
++#include <QVBoxLayout>
++#include <QtDebug>
++#include <algorithm>
++
++#include "moc_wwifipanel.cpp"
++#include "skin/legacy/skincontext.h"
++
++namespace {
++
++constexpr int kDefaultRows = 6;
++constexpr int kForgetDisarmMillis = 5000;
++constexpr int kStatusRefreshMillis = 5000;
++constexpr int kConnectTimeoutSeconds = 30;
++constexpr int kMaxPasswordLength = 63; // WPA-PSK passphrase limit
++constexpr int kMinPasswordLength = 8;
++
++const QString kNmcli = QStringLiteral("nmcli");
++const QStringList kTerse = {QStringLiteral("-t"),
++        QStringLiteral("--escape"),
++        QStringLiteral("yes")};
++
++bool looksLikePermissionError(const QString& err) {
++    return err.contains(QStringLiteral("not authorized"), Qt::CaseInsensitive) ||
++            err.contains(QStringLiteral("Insufficient privileges"), Qt::CaseInsensitive) ||
++            err.contains(QStringLiteral("permission"), Qt::CaseInsensitive);
++}
++
++} // namespace
++
++WWifiPanel::WWifiPanel(QWidget* pParent)
++        : QWidget(pParent),
++          WBaseWidget(this) {
++    // Let "#WifiPanel { background-color }" in the skin stylesheet paint us,
++    // as WWidgetGroup does; a plain QWidget ignores stylesheet backgrounds.
++    setAttribute(Qt::WA_StyledBackground, true);
++
++    auto* pLayout = new QVBoxLayout(this);
++    pLayout->setContentsMargins(0, 0, 0, 0);
++    pLayout->setSpacing(4);
++
++    m_pStatus = new QLabel(this);
++    m_pStatus->setObjectName(QStringLiteral("WifiStatus"));
++    m_pStatus->setAlignment(Qt::AlignCenter);
++    pLayout->addWidget(m_pStatus);
++
++    m_pListBox = new QWidget(this);
++    m_pListBox->setObjectName(QStringLiteral("WifiList"));
++    m_pListBox->setAttribute(Qt::WA_StyledBackground, true);
++    auto* pListLayout = new QVBoxLayout(m_pListBox);
++    pListLayout->setContentsMargins(0, 0, 0, 0);
++    pListLayout->setSpacing(4);
++    pLayout->addWidget(m_pListBox);
++
++    m_pHint = new QLabel(this);
++    m_pHint->setObjectName(QStringLiteral("WifiHint"));
++    m_pHint->setAlignment(Qt::AlignCenter);
++    m_pHint->setWordWrap(true);
++    pLayout->addWidget(m_pHint);
++
++    m_pEntryBox = new QWidget(this);
++    m_pEntryBox->setObjectName(QStringLiteral("WifiEntry"));
++    m_pEntryBox->setAttribute(Qt::WA_StyledBackground, true);
++    auto* pEntryLayout = new QVBoxLayout(m_pEntryBox);
++    pEntryLayout->setContentsMargins(0, 0, 0, 0);
++    pEntryLayout->setSpacing(6);
++    m_pEntryTitle = new QLabel(m_pEntryBox);
++    m_pEntryTitle->setObjectName(QStringLiteral("WifiEntryTitle"));
++    m_pEntryTitle->setAlignment(Qt::AlignCenter);
++    pEntryLayout->addWidget(m_pEntryTitle);
++    m_pEntryText = new QLabel(m_pEntryBox);
++    m_pEntryText->setObjectName(QStringLiteral("WifiEntryText"));
++    m_pEntryText->setAlignment(Qt::AlignCenter);
++    m_pEntryText->setTextFormat(Qt::PlainText);
++    pEntryLayout->addWidget(m_pEntryText);
++    m_pEntryHint = new QLabel(m_pEntryBox);
++    m_pEntryHint->setObjectName(QStringLiteral("WifiEntryHint"));
++    m_pEntryHint->setAlignment(Qt::AlignCenter);
++    m_pEntryHint->setWordWrap(true);
++    pEntryLayout->addWidget(m_pEntryHint);
++    m_pEntryBox->hide();
++    pLayout->addWidget(m_pEntryBox);
++
++    pLayout->addStretch(1);
++
++    m_forgetDisarmTimer.setSingleShot(true);
++    m_forgetDisarmTimer.setInterval(kForgetDisarmMillis);
++    connect(&m_forgetDisarmTimer, &QTimer::timeout, this, [this] {
++        m_armedForget.clear();
++        renderList();
++    });
++    m_statusTimer.setInterval(kStatusRefreshMillis);
++    connect(&m_statusTimer, &QTimer::timeout, this, &WWifiPanel::refreshStatus);
++
++    m_pStatus->setText(QStringLiteral("WI-FI"));
++    m_pHint->setText(QString());
++}
++
++void WWifiPanel::setup(const QDomNode& node, const SkinContext& context) {
++    int rows = context.selectString(node, QStringLiteral("Rows")).toInt();
++    if (rows <= 0) {
++        rows = kDefaultRows;
++    }
++    auto* pListLayout = m_pListBox->layout();
++    for (int i = 0; i < rows; ++i) {
++        auto* pRow = new QPushButton(m_pListBox);
++        pRow->setObjectName(QStringLiteral("WifiRow"));
++        pRow->setFocusPolicy(Qt::NoFocus);
++        pRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
++        pRow->setMinimumHeight(40);
++        pRow->setProperty("rowstate", QStringLiteral("normal"));
++        pRow->hide();
++        connect(pRow, &QPushButton::clicked, this, [this, i] { rowTapped(i); });
++        pListLayout->addWidget(pRow);
++        m_rows.append(pRow);
++    }
++}
++
++// ---------------------------------------------------------------- nmcli ---
++
++void WWifiPanel::runNmcli(const QStringList& args,
++        NmcliDone done,
++        bool sudoRetry,
++        bool viaSudo) {
++    auto* pProcess = new QProcess(this);
++    connect(pProcess,
++            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
++            this,
++            [this, pProcess, args, done, sudoRetry, viaSudo](
++                    int exitCode, QProcess::ExitStatus exitStatus) {
++                pProcess->deleteLater();
++                const QString out = QString::fromUtf8(
++                        pProcess->readAllStandardOutput());
++                const QString err = QString::fromUtf8(
++                        pProcess->readAllStandardError())
++                                            .trimmed();
++                if (exitStatus != QProcess::NormalExit) {
++                    exitCode = -1;
++                }
++                if (exitCode != 0 && sudoRetry && !viaSudo &&
++                        looksLikePermissionError(err)) {
++                    // polkit refused the session; the README documents a
++                    // passwordless sudo rule for nmcli as the fallback.
++                    qWarning() << "Wi-Fi: nmcli refused, retrying via sudo:" << err;
++                    runNmcli(args, done, sudoRetry, true);
++                    return;
++                }
++                if (exitCode != 0) {
++                    qWarning() << "Wi-Fi: nmcli" << args << "failed:" << exitCode << err;
++                }
++                done(exitCode, out, err);
++            });
++    connect(pProcess,
++            &QProcess::errorOccurred,
++            this,
++            [pProcess, done](QProcess::ProcessError error) {
++                // finished() never fires for a process that failed to start.
++                if (error == QProcess::FailedToStart) {
++                    pProcess->deleteLater();
++                    done(-2, QString(), QStringLiteral("nmcli not found"));
++                }
++            });
++    if (viaSudo) {
++        pProcess->start(QStringLiteral("sudo"),
++                QStringList() << QStringLiteral("-n") << kNmcli << args);
++    } else {
++        pProcess->start(kNmcli, args);
++    }
++}
++
++// nmcli -t separates fields with ':' and escapes ':' and backslash in values
++// with a backslash (--escape yes). Undo that while splitting.
++// static
++QStringList WWifiPanel::splitTerse(const QString& line) {
++    QStringList fields;
++    QString current;
++    for (int i = 0; i < line.size(); ++i) {
++        const QChar c = line.at(i);
++        if (c == QLatin1Char('\\') && i + 1 < line.size()) {
++            current.append(line.at(++i));
++        } else if (c == QLatin1Char(':')) {
++            fields.append(current);
++            current.clear();
++        } else {
++            current.append(c);
++        }
++    }
++    fields.append(current);
++    return fields;
++}
++
++// static
++QString WWifiPanel::signalBars(int signal) {
++    // Block elements from DejaVu Sans, which the Pi has; a figure space
++    // (U+2007) pads the missing bars so the SSIDs line up.
++    if (signal > 75) {
++        return QStringLiteral("▂▄▆█");
++    } else if (signal > 50) {
++        return QStringLiteral("▂▄▆ ");
++    } else if (signal > 25) {
++        return QStringLiteral("▂▄  ");
++    }
++    return QStringLiteral("▂   ");
++}
++
++// --------------------------------------------------------------- status ---
++
++void WWifiPanel::refreshStatus() {
++    if (!m_open) {
++        return;
++    }
++    runNmcli(QStringList() << kTerse << QStringLiteral("-f")
++                           << QStringLiteral("DEVICE,TYPE,STATE,CONNECTION")
++                           << QStringLiteral("dev") << QStringLiteral("status"),
++            [this](int exitCode, const QString& out, const QString&) {
++                if (!m_open) {
++                    return;
++                }
++                if (exitCode == -2) {
++                    m_pStatus->setText(QStringLiteral("NETWORKMANAGER (nmcli) NOT FOUND"));
++                    return;
++                }
++                if (exitCode != 0) {
++                    m_pStatus->setText(QStringLiteral("WI-FI STATUS UNAVAILABLE"));
++                    return;
++                }
++                QString device;
++                QString state;
++                QString connection;
++                const QStringList lines = out.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
++                for (const QString& line : lines) {
++                    const QStringList f = splitTerse(line);
++                    if (f.size() >= 4 && f.at(1) == QStringLiteral("wifi")) {
++                        device = f.at(0);
++                        state = f.at(2);
++                        connection = f.at(3);
++                        break;
++                    }
++                }
++                m_wifiDevice = device;
++                if (device.isEmpty()) {
++                    m_pStatus->setText(QStringLiteral("NO WI-FI ADAPTER"));
++                    return;
++                }
++                if (state.startsWith(QStringLiteral("connected"))) {
++                    const QString base = QStringLiteral("CONNECTED TO %1").arg(connection);
++                    m_pStatus->setText(base);
++                    runNmcli(QStringList() << QStringLiteral("-g")
++                                           << QStringLiteral("IP4.ADDRESS")
++                                           << QStringLiteral("dev")
++                                           << QStringLiteral("show") << device,
++                            [this, base](int code, const QString& ipOut, const QString&) {
++                                if (!m_open || code != 0) {
++                                    return;
++                                }
++                                const QString ip = ipOut.trimmed()
++                                                           .section(QLatin1Char('|'), 0, 0)
++                                                           .trimmed()
++                                                           .section(QLatin1Char('/'), 0, 0);
++                                if (!ip.isEmpty()) {
++                                    m_pStatus->setText(base +
++                                            QStringLiteral("  ·  ") + ip);
++                                }
++                            });
++                } else if (state.startsWith(QStringLiteral("connecting"))) {
++                    m_pStatus->setText(QStringLiteral("CONNECTING…"));
++                } else if (state.startsWith(QStringLiteral("unavailable"))) {
++                    m_pStatus->setText(QStringLiteral("WI-FI IS OFF"));
++                } else {
++                    m_pStatus->setText(QStringLiteral("NOT CONNECTED"));
++                }
++            });
++}
++
++// ----------------------------------------------------------------- scan ---
++
++void WWifiPanel::startScan() {
++    const int generation = ++m_scanGeneration;
++    setHint(QStringLiteral("SCANNING…"));
++    // Saved profiles first (so a known network connects without asking for
++    // its password again), then the scan itself.
++    runNmcli(QStringList() << kTerse << QStringLiteral("-f")
++                           << QStringLiteral("NAME,TYPE")
++                           << QStringLiteral("con") << QStringLiteral("show"),
++            [this, generation](int, const QString& savedOut, const QString&) {
++                if (generation != m_scanGeneration) {
++                    return; // page closed or rescanned meanwhile
++                }
++                listNetworks(generation, savedOut, true);
++            });
++}
++
++void WWifiPanel::listNetworks(int generation, const QString& savedOut, bool rescan) {
++    QStringList args;
++    args << kTerse << QStringLiteral("-f")
++         << QStringLiteral("IN-USE,SIGNAL,SECURITY,SSID")
++         << QStringLiteral("dev") << QStringLiteral("wifi") << QStringLiteral("list")
++         << QStringLiteral("--rescan")
++         << (rescan ? QStringLiteral("yes") : QStringLiteral("no"));
++    runNmcli(args,
++            [this, generation, savedOut, rescan](
++                    int exitCode, const QString& out, const QString& err) {
++                if (generation != m_scanGeneration) {
++                    return;
++                }
++                if (exitCode == -2) {
++                    m_networks.clear();
++                    renderList();
++                    setHint(QStringLiteral("NETWORKMANAGER (nmcli) NOT FOUND"), true);
++                    return;
++                }
++                if (exitCode != 0 && rescan) {
++                    // NM refuses a fresh scan right after the previous one;
++                    // fall back to whatever it already knows.
++                    listNetworks(generation, savedOut, false);
++                    return;
++                }
++                if (exitCode != 0) {
++                    m_networks.clear();
++                    renderList();
++                    setHint(QStringLiteral("SCAN FAILED: %1").arg(err.left(70)), true);
++                    return;
++                }
++                parseScan(savedOut, out);
++                renderList();
++            });
++}
++
++void WWifiPanel::parseScan(const QString& savedOut, const QString& scanOut) {
++    QSet<QString> saved;
++    const QStringList savedLines = savedOut.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
++    for (const QString& line : savedLines) {
++        const QStringList f = splitTerse(line);
++        if (f.size() >= 2 && f.at(1) == QStringLiteral("802-11-wireless")) {
++            saved.insert(f.at(0));
++        }
++    }
++
++    QList<Network> networks;
++    const QStringList lines = scanOut.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
++    for (const QString& line : lines) {
++        const QStringList f = splitTerse(line);
++        if (f.size() < 4) {
++            continue;
++        }
++        Network n;
++        n.inUse = f.at(0).trimmed() == QStringLiteral("*");
++        n.signal = f.at(1).toInt();
++        const QString security = f.at(2).trimmed();
++        n.secured = !security.isEmpty();
++        n.enterprise = security.contains(QStringLiteral("802.1X"));
++        // SSID is the last field on purpose: it may itself contain ':'.
++        n.ssid = f.mid(3).join(QLatin1Char(':'));
++        if (n.ssid.isEmpty()) {
++            continue; // hidden network
++        }
++        n.saved = saved.contains(n.ssid);
++        // One row per SSID: several access points share a name; keep the
++        // strongest and remember if any of them is the one we are on.
++        bool merged = false;
++        for (Network& existing : networks) {
++            if (existing.ssid == n.ssid) {
++                existing.inUse = existing.inUse || n.inUse;
++                existing.signal = qMax(existing.signal, n.signal);
++                merged = true;
++                break;
++            }
++        }
++        if (!merged) {
++            networks.append(n);
++        }
++    }
++    std::stable_sort(networks.begin(), networks.end(),
++            [](const Network& a, const Network& b) {
++                if (a.inUse != b.inUse) {
++                    return a.inUse;
++                }
++                return a.signal > b.signal;
++            });
++    m_networks = networks;
++}
++
++// ----------------------------------------------------------------- list ---
++
++void WWifiPanel::renderList() {
++    const int rows = m_rows.size();
++    if (rows == 0) {
++        return;
++    }
++    const int pages = qMax(1, (m_networks.size() + rows - 1) / rows);
++    m_page = qBound(0, m_page, pages - 1);
++    for (int i = 0; i < rows; ++i) {
++        QPushButton* pRow = m_rows.at(i);
++        const int index = m_page * rows + i;
++        if (index >= m_networks.size()) {
++            pRow->hide();
++            continue;
++        }
++        const Network& n = m_networks.at(index);
++        QString suffix;
++        const char* state = "normal";
++        if (!m_armedForget.isEmpty() && n.ssid == m_armedForget) {
++            pRow->setText(QStringLiteral("TAP AGAIN TO FORGET  %1").arg(n.ssid));
++            state = "armed";
++        } else {
++            if (n.inUse) {
++                suffix = QStringLiteral("  ·  CONNECTED");
++                state = "connected";
++            } else if (n.enterprise) {
++                suffix = QStringLiteral("  ·  ENTERPRISE");
++            } else if (n.saved) {
++                suffix = QStringLiteral("  ·  SAVED");
++            } else if (!n.secured) {
++                suffix = QStringLiteral("  ·  OPEN");
++            }
++            pRow->setText(QStringLiteral("%1   %2%3")
++                                  .arg(signalBars(n.signal), n.ssid, suffix));
++        }
++        setRowState(pRow, state);
++        pRow->show();
++    }
++    if (m_entry) {
++        return; // the list is hidden behind the password entry
++    }
++    if (m_networks.isEmpty()) {
++        setHint(QStringLiteral("NO NETWORKS FOUND — TAP RESCAN"));
++    } else if (pages > 1) {
++        setHint(QStringLiteral("PAGE %1/%2  ·  TAP A NETWORK TO CONNECT  ·  "
++                               "TAP THE CONNECTED ONE TO FORGET IT")
++                        .arg(m_page + 1)
++                        .arg(pages));
++    } else {
++        setHint(QStringLiteral("TAP A NETWORK TO CONNECT  ·  "
++                               "TAP THE CONNECTED ONE TO FORGET IT"));
++    }
++}
++
++void WWifiPanel::rowTapped(int row) {
++    if (m_busy || m_entry) {
++        return;
++    }
++    const int index = m_page * m_rows.size() + row;
++    if (index < 0 || index >= m_networks.size()) {
++        return;
++    }
++    const Network n = m_networks.at(index);
++    if (n.inUse) {
++        // Tap-again-to-confirm, like POWER OFF in the settings menu.
++        if (m_armedForget == n.ssid) {
++            m_forgetDisarmTimer.stop();
++            m_armedForget.clear();
++            forgetNetwork(n.ssid);
++            return;
++        }
++        m_armedForget = n.ssid;
++        m_forgetDisarmTimer.start();
++        renderList();
++        return;
++    }
++    m_forgetDisarmTimer.stop();
++    m_armedForget.clear();
++    if (n.enterprise) {
++        renderList();
++        setHint(QStringLiteral("ENTERPRISE (802.1X) NETWORKS CAN'T BE JOINED FROM HERE"), true);
++        return;
++    }
++    if (n.saved || !n.secured) {
++        startConnect(n, QString());
++        return;
++    }
++    beginEntry(n, QString());
++}
++
++// ---------------------------------------------------------------- entry ---
++
++void WWifiPanel::beginEntry(const Network& network, const QString& hint) {
++    m_entry = true;
++    m_entryNetwork = network;
++    m_entryText.clear();
++    m_pEntryTitle->setText(QStringLiteral("PASSWORD FOR %1").arg(network.ssid));
++    refreshEntryText();
++    setEntryHint(hint, !hint.isEmpty());
++    m_pStatus->hide();
++    m_pListBox->hide();
++    m_pHint->hide();
++    m_pEntryBox->show();
++    emit entryModeChanged(true);
++}
++
++void WWifiPanel::endEntry() {
++    if (!m_entry) {
++        return;
++    }
++    m_entry = false;
++    m_entryText.clear();
++    m_pEntryBox->hide();
++    m_pStatus->show();
++    m_pListBox->show();
++    m_pHint->show();
++    emit entryModeChanged(false);
++    renderList();
++}
++
++void WWifiPanel::confirmEntry() {
++    if (!m_entry || m_busy) {
++        return;
++    }
++    if (m_entryText.size() < kMinPasswordLength) {
++        setEntryHint(QStringLiteral("WI-FI PASSWORDS ARE AT LEAST %1 CHARACTERS")
++                             .arg(kMinPasswordLength),
++                true);
++        return;
++    }
++    startConnect(m_entryNetwork, m_entryText);
++}
++
++void WWifiPanel::appendText(const QString& text) {
++    if (!m_entry || m_entryText.size() >= kMaxPasswordLength) {
++        return;
++    }
++    m_entryText.append(text);
++    refreshEntryText();
++}
++
++void WWifiPanel::backspace() {
++    if (!m_entry || m_entryText.isEmpty()) {
++        return;
++    }
++    m_entryText.chop(1);
++    refreshEntryText();
++}
++
++void WWifiPanel::clearText() {
++    if (!m_entry) {
++        return;
++    }
++    m_entryText.clear();
++    refreshEntryText();
++}
++
++void WWifiPanel::refreshEntryText() {
++    // Shown in the clear on purpose: there is no way to see what a fat-finger
++    // typed on a touchscreen otherwise, and this is the operator's own unit.
++    const bool empty = m_entryText.isEmpty();
++    m_pEntryText->setText(empty
++                    ? QStringLiteral("type the password with the keyboard below")
++                    : m_entryText);
++    m_pEntryText->setProperty("placeholder", empty);
++    restyle(m_pEntryText);
++}
++
++// -------------------------------------------------------------- connect ---
++
++void WWifiPanel::startConnect(const Network& network, const QString& password) {
++    if (m_busy) {
++        return;
++    }
++    m_busy = true;
++    const QString connecting = QStringLiteral("CONNECTING TO %1…").arg(network.ssid);
++    if (m_entry) {
++        setEntryHint(connecting);
++    } else {
++        setHint(connecting);
++    }
++    // "dev wifi connect" reuses an existing profile for the SSID (updating
++    // its password when one is given) and creates one otherwise, so it
++    // serves saved, open and new networks alike.
++    QStringList args;
++    args << QStringLiteral("-w") << QString::number(kConnectTimeoutSeconds)
++         << QStringLiteral("dev") << QStringLiteral("wifi")
++         << QStringLiteral("connect") << network.ssid;
++    if (!password.isEmpty()) {
++        args << QStringLiteral("password") << password;
++    }
++    runNmcli(args,
++            [this, network](int exitCode, const QString&, const QString& err) {
++                m_busy = false;
++                if (exitCode == 0) {
++                    endEntry();
++                    setHint(QStringLiteral("CONNECTED TO %1").arg(network.ssid));
++                    refreshStatus();
++                    startScan();
++                    return;
++                }
++                if (exitCode == -2) {
++                    const QString msg = QStringLiteral("NETWORKMANAGER (nmcli) NOT FOUND");
++                    if (m_entry) {
++                        setEntryHint(msg, true);
++                    } else {
++                        setHint(msg, true);
++                    }
++                    return;
++                }
++                if (m_entry || !network.saved) {
++                    // A failed attempt leaves a half-made profile behind that
++                    // would otherwise show up as SAVED and fail silently next
++                    // time. Drop it; the next CONNECT starts clean.
++                    runNmcli(QStringList() << QStringLiteral("con")
++                                           << QStringLiteral("delete")
++                                           << QStringLiteral("id") << network.ssid,
++                            [](int, const QString&, const QString&) {},
++                            true);
++                }
++                if (m_entry) {
++                    setEntryHint(QStringLiteral("COULDN'T CONNECT — CHECK THE "
++                                                "PASSWORD AND TRY AGAIN"),
++                            true);
++                    return;
++                }
++                if (network.saved && network.secured) {
++                    Network again = network;
++                    again.saved = false;
++                    beginEntry(again,
++                            QStringLiteral("THE SAVED PASSWORD DIDN'T WORK — TYPE IT AGAIN"));
++                    return;
++                }
++                renderList();
++                setHint(QStringLiteral("COULDN'T CONNECT TO %1").arg(network.ssid), true);
++                qWarning() << "Wi-Fi: connect failed:" << err;
++            },
++            true);
++}
++
++void WWifiPanel::forgetNetwork(const QString& ssid) {
++    if (m_busy) {
++        return;
++    }
++    m_busy = true;
++    setHint(QStringLiteral("FORGETTING %1…").arg(ssid));
++    runNmcli(QStringList() << QStringLiteral("con") << QStringLiteral("delete")
++                           << QStringLiteral("id") << ssid,
++            [this, ssid](int exitCode, const QString&, const QString&) {
++                m_busy = false;
++                refreshStatus();
++                startScan();
++                if (exitCode != 0) {
++                    setHint(QStringLiteral("COULDN'T FORGET %1").arg(ssid), true);
++                }
++            },
++            true);
++}
++
++// ------------------------------------------------------------ page state ---
++
++void WWifiPanel::open() {
++    m_open = true;
++    m_page = 0;
++    m_armedForget.clear();
++    m_forgetDisarmTimer.stop();
++    endEntry();
++    m_pStatus->setText(QStringLiteral("CHECKING WI-FI…"));
++    refreshStatus();
++    startScan();
++    m_statusTimer.start();
++}
++
++void WWifiPanel::close() {
++    m_open = false;
++    m_statusTimer.stop();
++    m_forgetDisarmTimer.stop();
++    m_armedForget.clear();
++    ++m_scanGeneration; // drop any scan still in flight
++    endEntry();
++}
++
++void WWifiPanel::back() {
++    if (m_entry) {
++        endEntry();
++        return;
++    }
++    emit closeRequested();
++}
++
++void WWifiPanel::rescan() {
++    if (!m_open || m_entry) {
++        return;
++    }
++    refreshStatus();
++    startScan();
++}
++
++void WWifiPanel::prevPage() {
++    if (m_entry || m_page <= 0) {
++        return;
++    }
++    --m_page;
++    renderList();
++}
++
++void WWifiPanel::nextPage() {
++    if (m_entry) {
++        return;
++    }
++    const int rows = m_rows.size();
++    if (rows == 0 || (m_page + 1) * rows >= m_networks.size()) {
++        return;
++    }
++    ++m_page;
++    renderList();
++}
++
++// -------------------------------------------------------------- helpers ---
++
++void WWifiPanel::setHint(const QString& text, bool error) {
++    m_pHint->setText(text);
++    m_pHint->setProperty("error", error);
++    restyle(m_pHint);
++}
++
++void WWifiPanel::setEntryHint(const QString& text, bool error) {
++    m_pEntryHint->setText(text);
++    m_pEntryHint->setProperty("error", error);
++    restyle(m_pEntryHint);
++}
++
++void WWifiPanel::setRowState(QPushButton* pRow, const char* state) {
++    const QString value = QString::fromLatin1(state);
++    if (pRow->property("rowstate").toString() == value) {
++        return;
++    }
++    pRow->setProperty("rowstate", value);
++    restyle(pRow);
++}
++
++// Dynamic-property selectors ([rowstate="armed"], [error="true"]) are only
++// re-evaluated when the widget is re-polished.
++// static
++void WWifiPanel::restyle(QWidget* pWidget) {
++    pWidget->style()->unpolish(pWidget);
++    pWidget->style()->polish(pWidget);
++    pWidget->update();
++}

@@ -1,59 +1,176 @@
 <Template>
+  <!--
+    Description:
+      The on-screen keyboard. One layout, instantiated per text target:
+      the Search page (kb_prefix "search") and the Wi-Fi password entry
+      (kb_prefix "wifi"). Every key presses [Library],<kb_prefix>_... and
+      LibraryControl::setupOnScreenKeyboard routes the text to the right
+      place, so the skin never needs to know which field has "focus".
+
+      Five rows: digits, three letter rows, and the modifier row. The
+      letter rows swap for three rows of punctuation while the ?123 latch
+      ([Library],<kb_prefix>_symbols) is on; SHIFT
+      ([Library],<kb_prefix>_shift) flips every key face to its shifted
+      one and is one-shot - it drops when the shifted key is released,
+      like a phone keyboard. Punctuation keys carry their character's
+      decimal code point in the control name ("c33" is "!") because the
+      characters themselves cannot name a control.
+    Variables:
+      kb_prefix:       "search" or "wifi" (see above).
+      kb_done_control: what the Done key presses. The Search page passes
+                       [Skin],show_keyboard (a toggle: Done hides the
+                       keyboard); the Wi-Fi page passes
+                       [Library],wifi_connect (a push: Done connects).
+      kb_done_label:   the Done key's face ("Done", "CONNECT").
+  -->
   <WidgetGroup>
     <ObjectName>Keyboard</ObjectName>
     <Layout>vertical</Layout>
     <SizePolicy>me,me</SizePolicy>
     <Children>
       <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">1</SetVariable><SetVariable name="key_char">1</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">2</SetVariable><SetVariable name="key_char">2</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">3</SetVariable><SetVariable name="key_char">3</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">4</SetVariable><SetVariable name="key_char">4</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">5</SetVariable><SetVariable name="key_char">5</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">6</SetVariable><SetVariable name="key_char">6</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">7</SetVariable><SetVariable name="key_char">7</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">8</SetVariable><SetVariable name="key_char">8</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">9</SetVariable><SetVariable name="key_char">9</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">0</SetVariable><SetVariable name="key_char">0</SetVariable></Template>
+        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">1</SetVariable><SetVariable name="key_shift">1</SetVariable><SetVariable name="key_char">1</SetVariable></Template>
+        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">2</SetVariable><SetVariable name="key_shift">2</SetVariable><SetVariable name="key_char">2</SetVariable></Template>
+        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">3</SetVariable><SetVariable name="key_shift">3</SetVariable><SetVariable name="key_char">3</SetVariable></Template>
+        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">4</SetVariable><SetVariable name="key_shift">4</SetVariable><SetVariable name="key_char">4</SetVariable></Template>
+        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">5</SetVariable><SetVariable name="key_shift">5</SetVariable><SetVariable name="key_char">5</SetVariable></Template>
+        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">6</SetVariable><SetVariable name="key_shift">6</SetVariable><SetVariable name="key_char">6</SetVariable></Template>
+        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">7</SetVariable><SetVariable name="key_shift">7</SetVariable><SetVariable name="key_char">7</SetVariable></Template>
+        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">8</SetVariable><SetVariable name="key_shift">8</SetVariable><SetVariable name="key_char">8</SetVariable></Template>
+        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">9</SetVariable><SetVariable name="key_shift">9</SetVariable><SetVariable name="key_char">9</SetVariable></Template>
+        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">0</SetVariable><SetVariable name="key_shift">0</SetVariable><SetVariable name="key_char">0</SetVariable></Template>
       </Children></WidgetGroup>
+
+      <!-- Letter layer: shown while the ?123 latch is off. -->
+      <WidgetGroup>
+        <ObjectName>KbLetters</ObjectName>
+        <Layout>vertical</Layout>
+        <SizePolicy>me,me</SizePolicy>
+        <Children>
+          <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">q</SetVariable><SetVariable name="key_shift">Q</SetVariable><SetVariable name="key_char">q</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">w</SetVariable><SetVariable name="key_shift">W</SetVariable><SetVariable name="key_char">w</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">e</SetVariable><SetVariable name="key_shift">E</SetVariable><SetVariable name="key_char">e</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">r</SetVariable><SetVariable name="key_shift">R</SetVariable><SetVariable name="key_char">r</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">t</SetVariable><SetVariable name="key_shift">T</SetVariable><SetVariable name="key_char">t</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">y</SetVariable><SetVariable name="key_shift">Y</SetVariable><SetVariable name="key_char">y</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">u</SetVariable><SetVariable name="key_shift">U</SetVariable><SetVariable name="key_char">u</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">i</SetVariable><SetVariable name="key_shift">I</SetVariable><SetVariable name="key_char">i</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">o</SetVariable><SetVariable name="key_shift">O</SetVariable><SetVariable name="key_char">o</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">p</SetVariable><SetVariable name="key_shift">P</SetVariable><SetVariable name="key_char">p</SetVariable></Template>
+          </Children></WidgetGroup>
+          <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">a</SetVariable><SetVariable name="key_shift">A</SetVariable><SetVariable name="key_char">a</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">s</SetVariable><SetVariable name="key_shift">S</SetVariable><SetVariable name="key_char">s</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">d</SetVariable><SetVariable name="key_shift">D</SetVariable><SetVariable name="key_char">d</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">f</SetVariable><SetVariable name="key_shift">F</SetVariable><SetVariable name="key_char">f</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">g</SetVariable><SetVariable name="key_shift">G</SetVariable><SetVariable name="key_char">g</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">h</SetVariable><SetVariable name="key_shift">H</SetVariable><SetVariable name="key_char">h</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">j</SetVariable><SetVariable name="key_shift">J</SetVariable><SetVariable name="key_char">j</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">k</SetVariable><SetVariable name="key_shift">K</SetVariable><SetVariable name="key_char">k</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">l</SetVariable><SetVariable name="key_shift">L</SetVariable><SetVariable name="key_char">l</SetVariable></Template>
+          </Children></WidgetGroup>
+          <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">z</SetVariable><SetVariable name="key_shift">Z</SetVariable><SetVariable name="key_char">z</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">x</SetVariable><SetVariable name="key_shift">X</SetVariable><SetVariable name="key_char">x</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">c</SetVariable><SetVariable name="key_shift">C</SetVariable><SetVariable name="key_char">c</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">v</SetVariable><SetVariable name="key_shift">V</SetVariable><SetVariable name="key_char">v</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">b</SetVariable><SetVariable name="key_shift">B</SetVariable><SetVariable name="key_char">b</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">n</SetVariable><SetVariable name="key_shift">N</SetVariable><SetVariable name="key_char">n</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">m</SetVariable><SetVariable name="key_shift">M</SetVariable><SetVariable name="key_char">m</SetVariable></Template>
+          </Children></WidgetGroup>
+        </Children>
+        <Connection>
+          <ConfigKey persist="false">[Library],<Variable name="kb_prefix"/>_symbols</ConfigKey>
+          <BindProperty>visible</BindProperty>
+          <Transform><Not/></Transform>
+        </Connection>
+      </WidgetGroup>
+
+      <!-- Punctuation layer: shown while the ?123 latch is on. Same three
+           rows tall as the letters, so the keyboard never changes height. -->
+      <WidgetGroup>
+        <ObjectName>KbSymbols</ObjectName>
+        <Layout>vertical</Layout>
+        <SizePolicy>me,me</SizePolicy>
+        <Children>
+          <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">!</SetVariable><SetVariable name="key_shift">!</SetVariable><SetVariable name="key_char">c33</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">@</SetVariable><SetVariable name="key_shift">@</SetVariable><SetVariable name="key_char">c64</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">#</SetVariable><SetVariable name="key_shift">#</SetVariable><SetVariable name="key_char">c35</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">$</SetVariable><SetVariable name="key_shift">$</SetVariable><SetVariable name="key_char">c36</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">%</SetVariable><SetVariable name="key_shift">%</SetVariable><SetVariable name="key_char">c37</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">^</SetVariable><SetVariable name="key_shift">^</SetVariable><SetVariable name="key_char">c94</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">&amp;</SetVariable><SetVariable name="key_shift">&amp;</SetVariable><SetVariable name="key_char">c38</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">*</SetVariable><SetVariable name="key_shift">*</SetVariable><SetVariable name="key_char">c42</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">(</SetVariable><SetVariable name="key_shift">(</SetVariable><SetVariable name="key_char">c40</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">)</SetVariable><SetVariable name="key_shift">)</SetVariable><SetVariable name="key_char">c41</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">~</SetVariable><SetVariable name="key_shift">~</SetVariable><SetVariable name="key_char">c126</SetVariable></Template>
+          </Children></WidgetGroup>
+          <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">-</SetVariable><SetVariable name="key_shift">-</SetVariable><SetVariable name="key_char">c45</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">_</SetVariable><SetVariable name="key_shift">_</SetVariable><SetVariable name="key_char">c95</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">=</SetVariable><SetVariable name="key_shift">=</SetVariable><SetVariable name="key_char">c61</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">+</SetVariable><SetVariable name="key_shift">+</SetVariable><SetVariable name="key_char">c43</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">[</SetVariable><SetVariable name="key_shift">[</SetVariable><SetVariable name="key_char">c91</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">]</SetVariable><SetVariable name="key_shift">]</SetVariable><SetVariable name="key_char">c93</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">{</SetVariable><SetVariable name="key_shift">{</SetVariable><SetVariable name="key_char">c123</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">}</SetVariable><SetVariable name="key_shift">}</SetVariable><SetVariable name="key_char">c125</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">;</SetVariable><SetVariable name="key_shift">;</SetVariable><SetVariable name="key_char">c59</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">:</SetVariable><SetVariable name="key_shift">:</SetVariable><SetVariable name="key_char">c58</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">`</SetVariable><SetVariable name="key_shift">`</SetVariable><SetVariable name="key_char">c96</SetVariable></Template>
+          </Children></WidgetGroup>
+          <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">&apos;</SetVariable><SetVariable name="key_shift">&apos;</SetVariable><SetVariable name="key_char">c39</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">&quot;</SetVariable><SetVariable name="key_shift">&quot;</SetVariable><SetVariable name="key_char">c34</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">,</SetVariable><SetVariable name="key_shift">,</SetVariable><SetVariable name="key_char">c44</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">.</SetVariable><SetVariable name="key_shift">.</SetVariable><SetVariable name="key_char">c46</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">&lt;</SetVariable><SetVariable name="key_shift">&lt;</SetVariable><SetVariable name="key_char">c60</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">&gt;</SetVariable><SetVariable name="key_shift">&gt;</SetVariable><SetVariable name="key_char">c62</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">/</SetVariable><SetVariable name="key_shift">/</SetVariable><SetVariable name="key_char">c47</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">?</SetVariable><SetVariable name="key_shift">?</SetVariable><SetVariable name="key_char">c63</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">\</SetVariable><SetVariable name="key_shift">\</SetVariable><SetVariable name="key_char">c92</SetVariable></Template>
+            <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">|</SetVariable><SetVariable name="key_shift">|</SetVariable><SetVariable name="key_char">c124</SetVariable></Template>
+          </Children></WidgetGroup>
+        </Children>
+        <Connection>
+          <ConfigKey persist="false">[Library],<Variable name="kb_prefix"/>_symbols</ConfigKey>
+          <BindProperty>visible</BindProperty>
+        </Connection>
+      </WidgetGroup>
+
+      <!-- Modifier row. SHIFT and ?123 are latches (TOGGLE controls, so a
+           tap flips them); the rest are plain presses. -->
       <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">Q</SetVariable><SetVariable name="key_char">q</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">W</SetVariable><SetVariable name="key_char">w</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">E</SetVariable><SetVariable name="key_char">e</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">R</SetVariable><SetVariable name="key_char">r</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">T</SetVariable><SetVariable name="key_char">t</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">Y</SetVariable><SetVariable name="key_char">y</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">U</SetVariable><SetVariable name="key_char">u</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">I</SetVariable><SetVariable name="key_char">i</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">O</SetVariable><SetVariable name="key_char">o</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">P</SetVariable><SetVariable name="key_char">p</SetVariable></Template>
-      </Children></WidgetGroup>
-      <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">A</SetVariable><SetVariable name="key_char">a</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">S</SetVariable><SetVariable name="key_char">s</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">D</SetVariable><SetVariable name="key_char">d</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">F</SetVariable><SetVariable name="key_char">f</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">G</SetVariable><SetVariable name="key_char">g</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">H</SetVariable><SetVariable name="key_char">h</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">J</SetVariable><SetVariable name="key_char">j</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">K</SetVariable><SetVariable name="key_char">k</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">L</SetVariable><SetVariable name="key_char">l</SetVariable></Template>
-      </Children></WidgetGroup>
-      <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">Z</SetVariable><SetVariable name="key_char">z</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">X</SetVariable><SetVariable name="key_char">x</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">C</SetVariable><SetVariable name="key_char">c</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">V</SetVariable><SetVariable name="key_char">v</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">B</SetVariable><SetVariable name="key_char">b</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">N</SetVariable><SetVariable name="key_char">n</SetVariable></Template>
-        <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">M</SetVariable><SetVariable name="key_char">m</SetVariable></Template>
+        <PushButton>
+          <ObjectName>KbShift</ObjectName>
+          <SizePolicy>me,me</SizePolicy>
+          <NumberStates>2</NumberStates>
+          <State><Number>0</Number><Text>&#8679;</Text></State>
+          <State><Number>1</Number><Text>&#8679;</Text></State>
+          <Connection>
+            <ConfigKey persist="false">[Library],<Variable name="kb_prefix"/>_shift</ConfigKey>
+            <ButtonState>LeftButton</ButtonState>
+          </Connection>
+        </PushButton>
+        <PushButton>
+          <ObjectName>KbSymbols</ObjectName>
+          <SizePolicy>me,me</SizePolicy>
+          <NumberStates>2</NumberStates>
+          <State><Number>0</Number><Text>?123</Text></State>
+          <State><Number>1</Number><Text>ABC</Text></State>
+          <Connection>
+            <ConfigKey persist="false">[Library],<Variable name="kb_prefix"/>_symbols</ConfigKey>
+            <ButtonState>LeftButton</ButtonState>
+          </Connection>
+        </PushButton>
         <PushButton>
           <ObjectName>KbBackspace</ObjectName>
           <SizePolicy>me,me</SizePolicy>
           <NumberStates>1</NumberStates>
           <State><Number>0</Number><Text>&#9003;</Text></State>
           <Connection>
-            <ConfigKey persist="false">[Library],search_backspace</ConfigKey>
+            <ConfigKey persist="false">[Library],<Variable name="kb_prefix"/>_backspace</ConfigKey>
             <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
             <ButtonState>LeftButton</ButtonState>
           </Connection>
@@ -64,7 +181,7 @@
           <NumberStates>1</NumberStates>
           <State><Number>0</Number><Text>space</Text></State>
           <Connection>
-            <ConfigKey persist="false">[Library],search_space</ConfigKey>
+            <ConfigKey persist="false">[Library],<Variable name="kb_prefix"/>_space</ConfigKey>
             <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
             <ButtonState>LeftButton</ButtonState>
           </Connection>
@@ -75,19 +192,25 @@
           <NumberStates>1</NumberStates>
           <State><Number>0</Number><Text>clear</Text></State>
           <Connection>
-            <ConfigKey persist="false">[Library],clear_search</ConfigKey>
+            <ConfigKey persist="false">[Library],<Variable name="kb_prefix"/>_clear</ConfigKey>
             <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
             <ButtonState>LeftButton</ButtonState>
           </Connection>
         </PushButton>
+        <!-- No EmitOnPressAndRelease here on purpose: the press alone does
+             the right thing for both targets. [Skin],show_keyboard is a
+             skin-created TOGGLE control, so a press flips it and hides the
+             keyboard; [Library],wifi_connect is a PUSH control, so a press
+             sends 1 (and the release 0), which is what LibraryControl acts
+             on. -->
         <PushButton>
           <ObjectName>KbDone</ObjectName>
           <SizePolicy>me,me</SizePolicy>
           <NumberStates>2</NumberStates>
-          <State><Number>0</Number><Text>Done</Text></State>
-          <State><Number>1</Number><Text>Done</Text></State>
+          <State><Number>0</Number><Text><Variable name="kb_done_label"/></Text></State>
+          <State><Number>1</Number><Text><Variable name="kb_done_label"/></Text></State>
           <Connection>
-            <ConfigKey persist="false">[Skin],show_keyboard</ConfigKey>
+            <ConfigKey persist="false"><Variable name="kb_done_control"/></ConfigKey>
             <ButtonState>LeftButton</ButtonState>
           </Connection>
         </PushButton>

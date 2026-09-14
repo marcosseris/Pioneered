@@ -1,0 +1,147 @@
+<Template>
+  <!-- Wi-Fi page of the settings menu, shown in place of the menu while
+       [Library],wifi_page is 1 (WI-FI in the menu presses wifi_open;
+       BACK, the cog and the scrim take you back to the menu). It fills
+       the whole overlay: the list needs the height, and there is nothing
+       underneath worth reaching while it is up.
+
+       Layout, top to bottom:
+         header    WI-FI title, BACK
+         WifiPanel the dynamic part (C++: status, network rows, the
+                   password being typed) - see src/widget/wwifipanel.cpp
+         buttons   RESCAN, PREV, NEXT - only while browsing the list
+         keyboard  keyboard.xml with the "wifi" prefix - only while a
+                   password is being entered ([Library],wifi_entry)
+
+       Only one of the last two is ever visible, so the panel gets the
+       space the other would have taken. Every button here follows
+       settings.xml: the value comes from the skin, press/release emit 1/0,
+       and LibraryControl acts on the press.
+
+       Unpatched Mixxx has none of the wifi_* controls and no <WifiPanel>
+       tag; the page then never shows (wifi_page is created by the skin
+       parser at 0 and nothing sets it), so the rest of the menu is
+       unaffected. -->
+  <WidgetGroup>
+    <ObjectName>WifiPage</ObjectName>
+    <Layout>vertical</Layout>
+    <SizePolicy>me,me</SizePolicy>
+    <Children>
+      <WidgetGroup>
+        <ObjectName>WifiHeader</ObjectName>
+        <Layout>horizontal</Layout>
+        <Size>0me,48f</Size>
+        <Children>
+          <!-- Counterweight for BACK so the title sits centred. -->
+          <WidgetGroup>
+            <ObjectName>WifiHeaderSpacer</ObjectName>
+            <Layout>horizontal</Layout>
+            <Size>140f,0me</Size>
+          </WidgetGroup>
+          <Label>
+            <ObjectName>WifiTitle</ObjectName>
+            <Text>WI-FI</Text>
+            <SizePolicy>me,me</SizePolicy>
+          </Label>
+          <PushButton>
+            <ObjectName>WifiBack</ObjectName>
+            <Size>140f,0me</Size>
+            <NumberStates>2</NumberStates>
+            <State><Number>0</Number><Text>BACK</Text></State>
+            <State><Number>1</Number><Text>BACK</Text></State>
+            <!-- While a password is being typed BACK only leaves the
+                 password page; a second BACK leaves Wi-Fi. -->
+            <Connection>
+              <ConfigKey persist="false">[Library],wifi_back</ConfigKey>
+              <ConnectValueToWidget>false</ConnectValueToWidget>
+              <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
+              <ButtonState>LeftButton</ButtonState>
+            </Connection>
+          </PushButton>
+        </Children>
+      </WidgetGroup>
+
+      <WifiPanel>
+        <ObjectName>WifiPanel</ObjectName>
+        <SizePolicy>me,me</SizePolicy>
+        <Rows>6</Rows>
+      </WifiPanel>
+
+      <WidgetGroup>
+        <ObjectName>WifiListButtons</ObjectName>
+        <Layout>horizontal</Layout>
+        <Size>0me,56f</Size>
+        <Children>
+          <PushButton>
+            <ObjectName>WifiRescan</ObjectName>
+            <SizePolicy>me,me</SizePolicy>
+            <NumberStates>2</NumberStates>
+            <State><Number>0</Number><Text>RESCAN</Text></State>
+            <State><Number>1</Number><Text>RESCAN</Text></State>
+            <Connection>
+              <ConfigKey persist="false">[Library],wifi_rescan</ConfigKey>
+              <ConnectValueToWidget>false</ConnectValueToWidget>
+              <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
+              <ButtonState>LeftButton</ButtonState>
+            </Connection>
+          </PushButton>
+          <PushButton>
+            <ObjectName>WifiPrev</ObjectName>
+            <SizePolicy>me,me</SizePolicy>
+            <NumberStates>2</NumberStates>
+            <State><Number>0</Number><Text>&#9664; PREV</Text></State>
+            <State><Number>1</Number><Text>&#9664; PREV</Text></State>
+            <Connection>
+              <ConfigKey persist="false">[Library],wifi_prev</ConfigKey>
+              <ConnectValueToWidget>false</ConnectValueToWidget>
+              <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
+              <ButtonState>LeftButton</ButtonState>
+            </Connection>
+          </PushButton>
+          <PushButton>
+            <ObjectName>WifiNext</ObjectName>
+            <SizePolicy>me,me</SizePolicy>
+            <NumberStates>2</NumberStates>
+            <State><Number>0</Number><Text>NEXT &#9654;</Text></State>
+            <State><Number>1</Number><Text>NEXT &#9654;</Text></State>
+            <Connection>
+              <ConfigKey persist="false">[Library],wifi_next</ConfigKey>
+              <ConnectValueToWidget>false</ConnectValueToWidget>
+              <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
+              <ButtonState>LeftButton</ButtonState>
+            </Connection>
+          </PushButton>
+        </Children>
+        <Connection>
+          <ConfigKey persist="false">[Library],wifi_entry</ConfigKey>
+          <BindProperty>visible</BindProperty>
+          <Transform><Not/></Transform>
+        </Connection>
+      </WidgetGroup>
+
+      <!-- The search keyboard, re-targeted: keys press [Library],wifi_*
+           and Done reads CONNECT and presses wifi_connect. 5 rows at 40px:
+           there is room here, unlike on the Search page. -->
+      <WidgetGroup>
+        <ObjectName>KeyboardWrap</ObjectName>
+        <Layout>vertical</Layout>
+        <Size>0me,200f</Size>
+        <Children>
+          <Template src="skin:keyboard.xml">
+            <SetVariable name="kb_prefix">wifi</SetVariable>
+            <SetVariable name="kb_done_control">[Library],wifi_connect</SetVariable>
+            <SetVariable name="kb_done_label">CONNECT</SetVariable>
+          </Template>
+        </Children>
+        <Connection>
+          <ConfigKey persist="false">[Library],wifi_entry</ConfigKey>
+          <BindProperty>visible</BindProperty>
+        </Connection>
+      </WidgetGroup>
+    </Children>
+    <Connection>
+      <ConfigKey persist="false">[Library],wifi_page</ConfigKey>
+      <BindProperty>visible</BindProperty>
+    </Connection>
+  </WidgetGroup>
+</Template>

@@ -27,12 +27,19 @@
         <ObjectName>LibraryTable_Singleton</ObjectName>
       </SingletonContainer>
       <Template src="skin:templates/decks_row.xml"/>
+      <!-- keyboard.xml re-targeted at the search box: keys press
+           [Library],search_* and Done hides the keyboard. 5 rows (the
+           shift/symbols row is new) at 36px. -->
       <WidgetGroup>
         <ObjectName>KeyboardWrap</ObjectName>
         <Layout>vertical</Layout>
-        <Size>0me,160f</Size>
+        <Size>0me,180f</Size>
         <Children>
-          <Template src="skin:keyboard.xml"/>
+          <Template src="skin:keyboard.xml">
+            <SetVariable name="kb_prefix">search</SetVariable>
+            <SetVariable name="kb_done_control">[Skin],show_keyboard</SetVariable>
+            <SetVariable name="kb_done_label">Done</SetVariable>
+          </Template>
         </Children>
         <Connection>
           <ConfigKey persist="false">[Skin],show_keyboard</ConfigKey>
