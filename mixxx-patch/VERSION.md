@@ -386,3 +386,37 @@
     per-device parse threads need no lock. A match logs a warning naming the
     mount fix, since needing it at all means the stick is still mounted
     wrongly. Touches `src/library/rekordbox/rekordboxfeature.cpp`.
+22. `update-page.patch` (added 2026-09-14, r29) — SOFTWARE UPDATE in the
+    settings menu: runs the on-Pi updater and shows its terminal output live,
+    so the unit updates itself from the touchscreen. New widget
+    `src/widget/wupdatepanel.{h,cpp}` (skin tag `<UpdatePanel>`, parsed by
+    `LegacySkinParser::parseUpdatePanel`, added to `CMakeLists.txt`) runs
+    `sudo -n /usr/local/bin/update-pioneered.sh --no-reboot`. The command is
+    fixed in C++ rather than read from the skin deliberately: it runs as root
+    and a skin is a folder of XML anyone can drop in. `-n` because nothing
+    can answer a password prompt from there, so a missing sudoers rule fails
+    at once with a readable message instead of hanging. Both streams are
+    merged so the transcript reads as it would in a terminal; carriage
+    returns become newlines so apt's progress lines stack rather than
+    overwrite; ANSI escapes are stripped; `setMaximumBlockCount` caps the log
+    so a long run cannot grow without bound on a 1 GB Pi; and `QScroller`
+    makes it draggable, there being no wheel and no hitting that scrollbar
+    with a finger. UPDATE is tap-again-to-confirm on the menu's existing 5 s
+    disarm timer. While it runs, UPDATE and BACK are withdrawn; closing the
+    page (or the whole menu) leaves the update running, and the destructor
+    detaches from the process rather than killing it — a half-finished dpkg
+    is much worse than a lost window. On success RESTART NOW appears, reusing
+    the power-off ladder (logind, then passwordless sudo). Plumbing mirrors
+    the Wi-Fi page: `LibraryControl` owns `[Library],update_*` and forwards
+    to the panel bound via `Library::bindUpdatePanel`. One extra control,
+    `menu_subpage`, is 1 while any sub-page is open, because a skin
+    `Connection` drives a property from a single control and "menu hidden
+    while Wi-Fi *or* update is open" would otherwise be two bindings fighting
+    over `visible`. Touches `src/library/librarycontrol.{h,cpp}`,
+    `src/library/library.{h,cpp}`, `src/skin/legacy/legacyskinparser.{h,cpp}`,
+    `CMakeLists.txt`, plus the two new files. Skin side: new `update.xml`,
+    `settings.xml` (SOFTWARE UPDATE row, panel 418f, menu now hides on
+    `menu_subpage`), `style.qss`. Pi side: `pi/update-pioneered.sh` gains
+    `--no-reboot` and installs itself to `/usr/local/bin/` — by temp file and
+    rename, never a copy over itself, since bash reads a script as it runs
+    and this script may *be* the one being replaced.

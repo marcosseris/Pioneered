@@ -1,0 +1,157 @@
+<Template>
+  <!-- Software update page of the settings menu, shown in place of the menu
+       while [Library],update_page is 1 (UPDATE in the menu presses
+       update_open). Same shape as wifi.xml: a header, the C++ panel, and a
+       button row whose contents depend on state.
+
+       The panel (src/widget/wupdatepanel.cpp) runs the installed updater,
+       /usr/local/bin/update-pioneered.sh, in its no-reboot mode through
+       "sudo -n", and streams the output into a scrollable log, so an update
+       can be watched from the touchscreen exactly as it would look in a
+       terminal. (XML comments cannot contain a double hyphen, which is why
+       the flag is named in prose here.)
+
+       Three states drive the buttons:
+         idle              UPDATE + BACK
+         update_running=1  neither: apt is mid-way through dpkg and there is
+                           nothing safe to press. The log keeps scrolling.
+         update_done=1     RESTART NOW appears; the new build only takes
+                           effect once Mixxx restarts.
+
+       UPDATE is tap-again-to-confirm, like POWER OFF: it installs packages
+       and wants a restart, so one stray tap mid-set must not start it.
+
+       Unpatched Mixxx has none of the update_* controls and no <UpdatePanel>
+       tag, so the page never shows and the rest of the menu is unaffected. -->
+  <WidgetGroup>
+    <ObjectName>UpdatePage</ObjectName>
+    <Layout>vertical</Layout>
+    <SizePolicy>me,me</SizePolicy>
+    <Children>
+      <WidgetGroup>
+        <ObjectName>UpdateHeader</ObjectName>
+        <Layout>horizontal</Layout>
+        <Size>0me,48f</Size>
+        <Children>
+          <!-- Counterweight for BACK so the title stays centred. It keeps its
+               width while BACK is hidden, so the title does not jump when an
+               update starts. -->
+          <WidgetGroup>
+            <ObjectName>UpdateHeaderSpacer</ObjectName>
+            <Layout>horizontal</Layout>
+            <Size>140f,0me</Size>
+          </WidgetGroup>
+          <Label>
+            <ObjectName>UpdateTitle</ObjectName>
+            <Text>SOFTWARE UPDATE</Text>
+            <SizePolicy>me,me</SizePolicy>
+          </Label>
+          <WidgetGroup>
+            <ObjectName>UpdateHeaderSpacer</ObjectName>
+            <Layout>horizontal</Layout>
+            <Size>140f,0me</Size>
+            <Children>
+              <PushButton>
+                <ObjectName>UpdateBack</ObjectName>
+                <SizePolicy>me,me</SizePolicy>
+                <NumberStates>2</NumberStates>
+                <State><Number>0</Number><Text>BACK</Text></State>
+                <State><Number>1</Number><Text>BACK</Text></State>
+                <Connection>
+                  <ConfigKey persist="false">[Library],update_back</ConfigKey>
+                  <ConnectValueToWidget>false</ConnectValueToWidget>
+                  <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
+                  <ButtonState>LeftButton</ButtonState>
+                </Connection>
+                <Connection>
+                  <ConfigKey persist="false">[Library],update_running</ConfigKey>
+                  <BindProperty>visible</BindProperty>
+                  <Transform><Not/></Transform>
+                </Connection>
+              </PushButton>
+            </Children>
+          </WidgetGroup>
+        </Children>
+      </WidgetGroup>
+
+      <UpdatePanel>
+        <ObjectName>UpdatePanel</ObjectName>
+        <SizePolicy>me,me</SizePolicy>
+      </UpdatePanel>
+
+      <WidgetGroup>
+        <ObjectName>UpdateButtons</ObjectName>
+        <Layout>horizontal</Layout>
+        <Size>0me,64f</Size>
+        <Children>
+          <!-- Safe face, while nothing is armed and nothing is running. -->
+          <PushButton>
+            <ObjectName>UpdateRun</ObjectName>
+            <SizePolicy>me,me</SizePolicy>
+            <NumberStates>2</NumberStates>
+            <State><Number>0</Number><Text>UPDATE</Text></State>
+            <State><Number>1</Number><Text>UPDATE</Text></State>
+            <Connection>
+              <ConfigKey persist="false">[Library],update_run</ConfigKey>
+              <ConnectValueToWidget>false</ConnectValueToWidget>
+              <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
+              <ButtonState>LeftButton</ButtonState>
+            </Connection>
+            <Connection>
+              <ConfigKey persist="false">[Library],update_arm</ConfigKey>
+              <BindProperty>visible</BindProperty>
+              <Transform><Not/></Transform>
+            </Connection>
+          </PushButton>
+          <!-- Armed face. Only one of the two is ever visible, so the row
+               never changes width. -->
+          <PushButton>
+            <ObjectName>UpdateRunArmed</ObjectName>
+            <SizePolicy>me,me</SizePolicy>
+            <NumberStates>2</NumberStates>
+            <State><Number>0</Number><Text>TAP AGAIN TO UPDATE</Text></State>
+            <State><Number>1</Number><Text>TAP AGAIN TO UPDATE</Text></State>
+            <Connection>
+              <ConfigKey persist="false">[Library],update_run</ConfigKey>
+              <ConnectValueToWidget>false</ConnectValueToWidget>
+              <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
+              <ButtonState>LeftButton</ButtonState>
+            </Connection>
+            <Connection>
+              <ConfigKey persist="false">[Library],update_arm</ConfigKey>
+              <BindProperty>visible</BindProperty>
+            </Connection>
+          </PushButton>
+          <!-- Appears once the updater has finished cleanly. -->
+          <PushButton>
+            <ObjectName>UpdateReboot</ObjectName>
+            <SizePolicy>me,me</SizePolicy>
+            <NumberStates>2</NumberStates>
+            <State><Number>0</Number><Text>RESTART NOW</Text></State>
+            <State><Number>1</Number><Text>RESTART NOW</Text></State>
+            <Connection>
+              <ConfigKey persist="false">[Library],update_reboot</ConfigKey>
+              <ConnectValueToWidget>false</ConnectValueToWidget>
+              <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
+              <ButtonState>LeftButton</ButtonState>
+            </Connection>
+            <Connection>
+              <ConfigKey persist="false">[Library],update_done</ConfigKey>
+              <BindProperty>visible</BindProperty>
+            </Connection>
+          </PushButton>
+        </Children>
+        <!-- The whole row goes while the updater runs. -->
+        <Connection>
+          <ConfigKey persist="false">[Library],update_running</ConfigKey>
+          <BindProperty>visible</BindProperty>
+          <Transform><Not/></Transform>
+        </Connection>
+      </WidgetGroup>
+    </Children>
+    <Connection>
+      <ConfigKey persist="false">[Library],update_page</ConfigKey>
+      <BindProperty>visible</BindProperty>
+    </Connection>
+  </WidgetGroup>
+</Template>

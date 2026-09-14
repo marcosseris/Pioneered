@@ -86,6 +86,12 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   * Power off uses `systemctl poweroff`, falling back to passwordless `sudo`
     (the same rule the USB eject relies on); if both are refused you get a
     POWER OFF FAILED banner rather than a dead button
+  * **SOFTWARE UPDATE** opens a page that runs the updater on the Pi and
+    shows its **terminal output live**, so a new build can be installed from
+    the touchscreen with no ssh session. UPDATE is tap-again-to-confirm;
+    while it runs the buttons withdraw (apt is mid-way through dpkg) and the
+    log scrolls, dragged with a finger. When it finishes, **RESTART NOW**
+    appears. Closing the page leaves a running update running
   * **WI-FI** opens a full-screen page: connection status with IP address,
     the networks in range (strongest first, tagged CONNECTED / SAVED / OPEN /
     ENTERPRISE), RESCAN and PREV/NEXT paging. Tap a network to join it —
@@ -166,7 +172,25 @@ will retry through it:
 echo 'youruser ALL=(ALL) NOPASSWD: /usr/bin/nmcli' | sudo tee /etc/sudoers.d/mixxx-wifi
 ```
 
-### 6. Controller
+### 6. Update-button permission
+
+The settings menu's **SOFTWARE UPDATE** button runs the updater as root via
+`sudo -n`, so it needs a passwordless rule. Without it the page says so and
+changes nothing; updating from a shell keeps working either way.
+
+```bash
+echo 'youruser ALL=(ALL) NOPASSWD: /usr/local/bin/update-pioneered.sh' \
+  | sudo tee /etc/sudoers.d/mixxx-update
+```
+
+That rule lets anyone at the touchscreen install whatever the configured
+GitHub repo publishes, which on a stage box is the point — but it is real
+root access, so leave it out if the unit is not yours alone.
+
+`/usr/local/bin/update-pioneered.sh` is put there by the updater itself from
+r29 on, so run it once from a shell before the button can work.
+
+### 7. Controller
 
 Plug in the DDJ-400 and enable it in *Preferences → Controllers* with the
 built-in **Pioneer DDJ-400** mapping (the patched `mixxx-data` package contains

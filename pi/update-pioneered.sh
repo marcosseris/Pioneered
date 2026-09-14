@@ -1,12 +1,17 @@
 #!/bin/bash
 # One-shot Pioneered updater for the XDJ400 Pi.
 #
-#   sudo ./update-pioneered.sh          # install the latest GitHub release
+#   sudo ./update-pioneered.sh              # install the latest GitHub release
 #   sudo ./update-pioneered.sh v2.5.0-r18   # install a specific release (also allows rollback)
+#   sudo ./update-pioneered.sh --no-reboot  # install, but leave rebooting to the caller
 #
-# Fetches the release's three Mixxx debs and the matching skin from
-# github.com/ogg755/Pioneered, installs them non-interactively, re-holds the
-# packages, then reboots (Ctrl-C during the countdown to skip the reboot).
+# Fetches the release's three Mixxx debs and the matching skin from GitHub,
+# installs them non-interactively, re-holds the packages, refreshes the pi/
+# helper layer, then reboots (Ctrl-C during the countdown to skip the reboot).
+#
+# --no-reboot is what the settings menu's UPDATE button uses: it runs this
+# script and shows the output on screen, then offers a RESTART button, since
+# there is no terminal there to press Ctrl-C in.
 set -euo pipefail
 
 REPO="ogg755/Pioneered"
@@ -26,8 +31,31 @@ WORKDIR="$(mktemp -d /tmp/pioneered-update.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 cd "$WORKDIR"
 
+# --- Arguments ---------------------------------------------------------------
+NO_REBOOT=0
+TAG=""
+for arg in "$@"; do
+    case "$arg" in
+        --no-reboot) NO_REBOOT=1 ;;
+        -h|--help)
+            sed -n '2,12p' "$0"
+            exit 0
+            ;;
+        -*)
+            echo "ERROR: unknown option '$arg'" >&2
+            exit 2
+            ;;
+        *)
+            if [[ -n "$TAG" ]]; then
+                echo "ERROR: more than one release given ('$TAG', '$arg')" >&2
+                exit 2
+            fi
+            TAG="$arg"
+            ;;
+    esac
+done
+
 # --- Resolve release ---------------------------------------------------------
-TAG="${1:-}"
 if [[ -n "$TAG" ]]; then
     API_URL="https://api.github.com/repos/$REPO/releases/tags/$TAG"
 else
@@ -93,11 +121,29 @@ install -m 644 "$SKIN_SRC/pi/usb-mount@.service" /etc/systemd/system/
 udevadm control --reload
 systemctl daemon-reload
 
+# --- Install this script ------------------------------------------------------
+# So /usr/local/bin/update-pioneered.sh is always the newest one, and the
+# settings menu's UPDATE button has a fixed path to call.
+#
+# Written to a temp file and renamed rather than copied over: this script may
+# BE /usr/local/bin/update-pioneered.sh, and bash reads a script as it runs.
+# Overwriting it in place would feed the running shell the tail of the new
+# file at the old offset. A rename leaves the open inode alone.
+echo "==> Installing the updater to /usr/local/bin/update-pioneered.sh"
+SELF_TMP="$(mktemp /usr/local/bin/.update-pioneered.XXXXXX)"
+cat "$SKIN_SRC/pi/update-pioneered.sh" > "$SELF_TMP"
+chmod 755 "$SELF_TMP"
+mv -f "$SELF_TMP" /usr/local/bin/update-pioneered.sh
+
 # --- Report + reboot ---------------------------------------------------------
 echo
 echo "==> Installed: $(dpkg-query -W -f='${Package} ${Version}\n' mixxx)"
 echo "==> Skin updated from release $TAG"
 echo
+if [[ $NO_REBOOT -eq 1 ]]; then
+    echo "Not rebooting (--no-reboot). Restart to finish the update."
+    exit 0
+fi
 echo "Rebooting in 10 seconds so Mixxx restarts on the new build."
 echo "Press Ctrl-C to skip the reboot (then restart Mixxx yourself)."
 sleep 10

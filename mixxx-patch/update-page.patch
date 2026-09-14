@@ -1,0 +1,728 @@
+Description: Software update page in the settings menu, with live output
+ Updating the unit meant an ssh session and a shell, which is exactly the
+ thing this build set out to remove: the XDJ400 has a touchscreen, no
+ keyboard and no desktop behind Mixxx. The settings menu gains a SOFTWARE
+ UPDATE entry that opens a page running the on-Pi updater and showing its
+ terminal output live, line by line, as it installs.
+ .
+ New widget WUpdatePanel (src/widget/wupdatepanel.{h,cpp}, skin tag
+ <UpdatePanel>) owns the status line and the transcript. It runs
+ "sudo -n /usr/local/bin/update-pioneered.sh --no-reboot": the path is fixed
+ in C++ rather than taken from the skin because this runs as root and a skin
+ is a folder of XML anyone can drop in; -n because there is no terminal
+ behind the window to answer a password prompt, so a missing sudoers rule has
+ to fail immediately with a message rather than hang forever. Output from
+ both streams is merged so the log reads exactly as it would in a terminal,
+ carriage returns are turned into newlines so apt's progress lines stack
+ instead of overwriting, ANSI escapes are stripped, and the block count is
+ capped so a long run cannot grow without bound on a 1 GB Pi. The log is
+ dragged with a finger (QScroller): there is no wheel, and the scrollbar is
+ far too thin to hit.
+ .
+ UPDATE is tap-again-to-confirm on the same 5 s disarm timer as POWER OFF --
+ it installs packages and wants a restart, so one stray tap mid-set must not
+ start it. While it runs, UPDATE and BACK are withdrawn: apt is mid-way
+ through dpkg and there is nothing safe to press. Closing the page (or the
+ menu) deliberately leaves a running update running, and the widget's
+ destructor detaches from the process rather than killing it, because a
+ half-finished dpkg is far worse than a lost window. When it finishes
+ cleanly, RESTART NOW appears; rebooting reuses the settings menu's ladder
+ (logind, then passwordless sudo).
+ .
+ The plumbing mirrors the Wi-Fi page exactly: LibraryControl owns the
+ [Library],update_* controls and forwards them to the panel bound through
+ Library::bindUpdatePanel, and the skin reads update_page / update_running /
+ update_arm / update_done for its layout. One new control, menu_subpage, is
+ 1 while any sub-page is up: a skin Connection drives a property from a
+ single control, so "menu hidden while Wi-Fi OR update is open" needs a
+ control of its own rather than two bindings fighting over visibility.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1328,6 +1328,7 @@
+   src/widget/wwaveformviewer.cpp
+   src/widget/wwidget.cpp
+   src/widget/wwidgetgroup.cpp
++  src/widget/wupdatepanel.cpp
+   src/widget/wwidgetstack.cpp
+   src/widget/wwifipanel.cpp
+ )
+diff --git a/src/library/librarycontrol.h b/src/library/librarycontrol.h
+--- a/src/library/librarycontrol.h
++++ b/src/library/librarycontrol.h
+@@ -19,6 +19,7 @@
+ class WLibrary;
+ class WLibrarySidebar;
+ class WSearchLineEdit;
++class WUpdatePanel;
+ class WWifiPanel;
+ class KeyboardEventFilter;
+ 
+@@ -51,6 +52,7 @@
+     void bindSidebarWidget(WLibrarySidebar* pLibrarySidebar);
+     void bindSearchboxWidget(WSearchLineEdit* pSearchbox);
+     void bindWifiPanel(WWifiPanel* pPanel);
++    void bindUpdatePanel(WUpdatePanel* pPanel);
+     // Give the keyboard focus to one of the library widgets
+     void setLibraryFocus(FocusWidget newFocusWidget);
+     FocusWidget getFocusedWidget();
+@@ -69,6 +71,7 @@
+     void sidebarWidgetDeleted();
+     void searchboxWidgetDeleted();
+     void wifiPanelDeleted();
++    void updatePanelDeleted();
+ 
+     // Update m_focusedWidget and m_pFocusedWidgetCO
+     void slotFocusedWidgetChanged(QWidget* oldW, QWidget* newW);
+@@ -324,6 +327,22 @@
+     // body is a WWifiPanel widget bound via bindWifiPanel().
+     void openWifiPage();
+     void closeWifiPage();
++
++    // Pioneered software update page (UPDATE in the settings menu). Runs the
++    // on-Pi updater and shows its output live, so a new build can be
++    // installed from the touchscreen. update_run is tap-again-to-confirm --
++    // it installs packages and wants a restart afterwards, so it must not be
++    // one stray tap away mid-set. While it runs, BACK and UPDATE are
++    // withdrawn (update_running) and closing the page leaves it running.
++    void openUpdatePage();
++    void closeUpdatePage();
++    /// [Library],menu_subpage is 1 while any settings sub-page is up. The
++    /// menu binds its own visibility to it: a skin Connection can drive a
++    /// property from one control only, so "hidden while Wi-Fi OR update is
++    /// open" has to be one control rather than two.
++    void updateSubpageControl();
++    void slotUpdateRun(double v);
++    void triggerReboot();
+     std::unique_ptr<ControlPushButton> m_pWifiOpen;
+     std::unique_ptr<ControlPushButton> m_pWifiBack;
+     std::unique_ptr<ControlPushButton> m_pWifiRescan;
+@@ -333,6 +352,18 @@
+     std::unique_ptr<ControlPushButton> m_pWifiPage;
+     std::unique_ptr<ControlPushButton> m_pWifiEntry;
+ 
++    // Software update page state (see openUpdatePage above).
++    std::unique_ptr<ControlPushButton> m_pUpdateOpen;
++    std::unique_ptr<ControlPushButton> m_pUpdateBack;
++    std::unique_ptr<ControlPushButton> m_pUpdateRun;
++    std::unique_ptr<ControlPushButton> m_pUpdateReboot;
++    std::unique_ptr<ControlPushButton> m_pUpdatePage;
++    std::unique_ptr<ControlPushButton> m_pUpdateArm;
++    std::unique_ptr<ControlPushButton> m_pUpdateRunning;
++    std::unique_ptr<ControlPushButton> m_pUpdateDone;
++    std::unique_ptr<ControlPushButton> m_pMenuSubpage;
++    bool m_rebootTriggered = false;
++
+     // Font sizes
+     std::unique_ptr<ControlPushButton> m_pFontSizeIncrement;
+     std::unique_ptr<ControlPushButton> m_pFontSizeDecrement;
+@@ -353,6 +384,7 @@
+     WLibrarySidebar* m_pSidebarWidget;
+     WSearchLineEdit* m_pSearchbox;
+     WWifiPanel* m_pWifiPanel = nullptr;
++    WUpdatePanel* m_pUpdatePanel = nullptr;
+ 
+     // Other variables
+     ControlProxy m_numDecks;
+diff --git a/src/library/librarycontrol.cpp b/src/library/librarycontrol.cpp
+--- a/src/library/librarycontrol.cpp
++++ b/src/library/librarycontrol.cpp
+@@ -23,6 +23,7 @@
+ #include "widget/wlibrarysidebar.h"
+ #include "widget/wsearchlineedit.h"
+ #include "widget/wtracktableview.h"
++#include "widget/wupdatepanel.h"
+ #include "widget/wwifipanel.h"
+ 
+ namespace {
+@@ -619,7 +620,9 @@
+     m_pWifiEntry = std::make_unique<ControlPushButton>(
+             ConfigKey("[Library]", "wifi_entry"));
+     m_pWifiEntry->setStates(2);
+-    const auto makeWifiAction = [this](const char* item,
++    // Shared shape for every settings sub-page button: a push control
++    // that runs an action on the press edge and ignores the release.
++    const auto makeMenuAction = [this](const char* item,
+                                         std::function<void()> action) {
+         auto pControl = std::make_unique<ControlPushButton>(
+                 ConfigKey("[Library]", item));
+@@ -633,35 +636,70 @@
+                 });
+         return pControl;
+     };
+-    m_pWifiOpen = makeWifiAction("wifi_open", [this] { openWifiPage(); });
+-    m_pWifiBack = makeWifiAction("wifi_back", [this] {
++    m_pWifiOpen = makeMenuAction("wifi_open", [this] { openWifiPage(); });
++    m_pWifiBack = makeMenuAction("wifi_back", [this] {
+         if (m_pWifiPanel) {
+             m_pWifiPanel->back(); // leaves password entry, else closeRequested
+         } else {
+             closeWifiPage();
+         }
+     });
+-    m_pWifiRescan = makeWifiAction("wifi_rescan", [this] {
++    m_pWifiRescan = makeMenuAction("wifi_rescan", [this] {
+         if (m_pWifiPanel) {
+             m_pWifiPanel->rescan();
+         }
+     });
+-    m_pWifiPrev = makeWifiAction("wifi_prev", [this] {
++    m_pWifiPrev = makeMenuAction("wifi_prev", [this] {
+         if (m_pWifiPanel) {
+             m_pWifiPanel->prevPage();
+         }
+     });
+-    m_pWifiNext = makeWifiAction("wifi_next", [this] {
++    m_pWifiNext = makeMenuAction("wifi_next", [this] {
+         if (m_pWifiPanel) {
+             m_pWifiPanel->nextPage();
+         }
+     });
+-    m_pWifiConnect = makeWifiAction("wifi_connect", [this] {
++    m_pWifiConnect = makeMenuAction("wifi_connect", [this] {
+         if (m_pWifiPanel) {
+             m_pWifiPanel->confirmEntry();
+         }
+     });
+ 
++    // Pioneered software update page. Same shape as the Wi-Fi page: presses
++    // from the skin, state back to it, the body a bound widget.
++    m_pUpdatePage = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "update_page"));
++    m_pUpdatePage->setStates(2);
++    m_pUpdateArm = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "update_arm"));
++    m_pUpdateArm->setStates(2);
++    m_pUpdateRunning = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "update_running"));
++    m_pUpdateRunning->setStates(2);
++    m_pUpdateDone = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "update_done"));
++    m_pUpdateDone->setStates(2);
++    m_pMenuSubpage = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "menu_subpage"));
++    m_pMenuSubpage->setStates(2);
++    m_pUpdateOpen = makeMenuAction("update_open", [this] { openUpdatePage(); });
++    m_pUpdateBack = makeMenuAction("update_back", [this] {
++        // An update in flight owns the screen: apt is mid-way through dpkg
++        // and the operator must see how it ends.
++        if (m_pUpdatePanel && m_pUpdatePanel->isRunning()) {
++            return;
++        }
++        closeUpdatePage();
++    });
++    m_pUpdateReboot = makeMenuAction("update_reboot", [this] { triggerReboot(); });
++    m_pUpdateRun = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "update_run"));
++    m_pUpdateRun->connectValueChangeRequest(this,
++            [this](double value) {
++                m_pUpdateRun->setAndConfirm(value);
++                slotUpdateRun(value);
++            });
++
+     // Show the track context menu for selected tracks, or hide it
+     // if it is the current active window
+     // The control is updated in slotUpdateTrackMenuControl with the actual state
+@@ -886,6 +924,7 @@
+     m_pArmPower->setAndConfirm(0.0);
+     m_pArmRestart->setAndConfirm(0.0);
+     m_pWifiPage->setAndConfirm(1.0);
++    updateSubpageControl();
+     if (m_pWifiPanel) {
+         m_pWifiPanel->open();
+     }
+@@ -897,6 +936,118 @@
+     }
+     m_pWifiEntry->setAndConfirm(0.0);
+     m_pWifiPage->setAndConfirm(0.0);
++    updateSubpageControl();
++}
++
++void LibraryControl::bindUpdatePanel(WUpdatePanel* pPanel) {
++    if (m_pUpdatePanel) {
++        disconnect(m_pUpdatePanel, nullptr, this, nullptr);
++    }
++    m_pUpdatePanel = pPanel;
++    connect(m_pUpdatePanel,
++            &WUpdatePanel::destroyed,
++            this,
++            &LibraryControl::updatePanelDeleted);
++    connect(m_pUpdatePanel,
++            &WUpdatePanel::runningChanged,
++            this,
++            [this](bool running) {
++                m_pUpdateRunning->setAndConfirm(running ? 1.0 : 0.0);
++                if (running) {
++                    m_pUpdateDone->setAndConfirm(0.0);
++                }
++            });
++    connect(m_pUpdatePanel,
++            &WUpdatePanel::finishedOk,
++            this,
++            [this](bool ok) {
++                m_pUpdateDone->setAndConfirm(ok ? 1.0 : 0.0);
++            });
++}
++
++void LibraryControl::updatePanelDeleted() {
++    m_pUpdatePanel = nullptr;
++}
++
++void LibraryControl::openUpdatePage() {
++    m_disarmTimer.stop();
++    m_pArmPower->setAndConfirm(0.0);
++    m_pArmRestart->setAndConfirm(0.0);
++    m_pUpdateArm->setAndConfirm(0.0);
++    m_pUpdatePage->setAndConfirm(1.0);
++    updateSubpageControl();
++    if (m_pUpdatePanel) {
++        m_pUpdatePanel->open();
++    }
++}
++
++void LibraryControl::closeUpdatePage() {
++    // A running update is deliberately left running; only the page goes away.
++    if (m_pUpdatePanel) {
++        m_pUpdatePanel->close();
++    }
++    m_pUpdateArm->setAndConfirm(0.0);
++    m_pUpdatePage->setAndConfirm(0.0);
++    updateSubpageControl();
++}
++
++void LibraryControl::updateSubpageControl() {
++    const bool anyOpen = m_pWifiPage->get() > 0.0 || m_pUpdatePage->get() > 0.0;
++    m_pMenuSubpage->setAndConfirm(anyOpen ? 1.0 : 0.0);
++}
++
++void LibraryControl::slotUpdateRun(double v) {
++    if (v <= 0.0) {
++        return; // arm/commit on press, as the settings menu does
++    }
++    if (!m_pUpdatePanel || m_pUpdatePanel->isRunning()) {
++        return;
++    }
++    if (m_pUpdateArm->get() > 0.0) {
++        m_disarmTimer.stop();
++        m_pUpdateArm->setAndConfirm(0.0);
++        m_pUpdatePanel->run();
++        return;
++    }
++    m_pUpdateArm->setAndConfirm(1.0);
++    m_disarmTimer.start();
++}
++
++void LibraryControl::triggerReboot() {
++    if (m_rebootTriggered) {
++        return;
++    }
++    m_rebootTriggered = true;
++    showBanner(m_pRestarting.get());
++    // Same ladder as the settings menu's power off: logind first, then the
++    // passwordless sudo the rest of the Pi integration already relies on.
++    const QString script = QStringLiteral(
++            "systemctl reboot || sudo -n reboot || sudo -n shutdown -r now");
++    qWarning() << "Settings menu: rebooting:" << script;
++    auto* pProcess = new QProcess(this);
++    connect(pProcess,
++            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
++            this,
++            [this, pProcess](int exitCode, QProcess::ExitStatus exitStatus) {
++                pProcess->deleteLater();
++                if (exitStatus == QProcess::NormalExit && exitCode == 0) {
++                    return; // reboot queued; the banner rides it out
++                }
++                m_rebootTriggered = false;
++                showBanner(m_pPowerOffFailed.get());
++            });
++    connect(pProcess,
++            &QProcess::errorOccurred,
++            this,
++            [this, pProcess](QProcess::ProcessError error) {
++                if (error == QProcess::FailedToStart) {
++                    pProcess->deleteLater();
++                    m_rebootTriggered = false;
++                    showBanner(m_pPowerOffFailed.get());
++                }
++            });
++    pProcess->start(QStringLiteral("/bin/sh"),
++            {QStringLiteral("-c"), script});
+ }
+ 
+ void LibraryControl::maybeCreateGroupController(const QString& group) {
+@@ -1691,9 +1842,15 @@
+     m_disarmTimer.stop();
+     m_pArmPower->setAndConfirm(0.0);
+     m_pArmRestart->setAndConfirm(0.0);
++    m_pUpdateArm->setAndConfirm(0.0);
+     // The cog, BACK and the scrim all press menu_disarm: whatever page the
+-    // menu was on, it reopens on the main menu, not inside the Wi-Fi list.
++    // menu was on, it reopens on the main menu, not inside a sub-page. An
++    // update in flight keeps the page, though -- it must be watched to the
++    // end, and closing it would strand the operator with no way back to it.
+     closeWifiPage();
++    if (!(m_pUpdatePanel && m_pUpdatePanel->isRunning())) {
++        closeUpdatePage();
++    }
+ }
+ 
+ void LibraryControl::triggerPowerOff() {
+diff --git a/src/library/library.h b/src/library/library.h
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -30,6 +30,7 @@
+ class SidebarModel;
+ class TrackCollectionManager;
+ class WSearchLineEdit;
++class WUpdatePanel;
+ class WWifiPanel;
+ class WLibrarySidebar;
+ class WLibrary;
+@@ -69,6 +70,7 @@
+ 
+     void bindSearchboxWidget(WSearchLineEdit* pSearchboxWidget);
+     void bindWifiPanel(WWifiPanel* pWifiPanel);
++    void bindUpdatePanel(WUpdatePanel* pUpdatePanel);
+     void bindSidebarWidget(WLibrarySidebar* sidebarWidget);
+     void bindLibraryWidget(WLibrary* libraryWidget,
+                     KeyboardEventFilter* pKeyboard);
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -334,6 +334,10 @@
+     m_pLibraryControl->bindWifiPanel(pWifiPanel);
+ }
+ 
++void Library::bindUpdatePanel(WUpdatePanel* pUpdatePanel) {
++    m_pLibraryControl->bindUpdatePanel(pUpdatePanel);
++}
++
+ void Library::bindSidebarWidget(WLibrarySidebar* pSidebarWidget) {
+     m_pLibraryControl->bindSidebarWidget(pSidebarWidget);
+ 
+diff --git a/src/skin/legacy/legacyskinparser.h b/src/skin/legacy/legacyskinparser.h
+--- a/src/skin/legacy/legacyskinparser.h
++++ b/src/skin/legacy/legacyskinparser.h
+@@ -118,6 +118,7 @@
+     QWidget* parseTableView(const QDomElement& node);
+     QWidget* parseSearchBox(const QDomElement& node);
+     QWidget* parseWifiPanel(const QDomElement& node);
++    QWidget* parseUpdatePanel(const QDomElement& node);
+     QWidget* parseLibrary(const QDomElement& node);
+     QWidget* parseLibrarySidebar(const QDomElement& node);
+     QWidget* parseBattery(const QDomElement& node);
+diff --git a/src/skin/legacy/legacyskinparser.cpp b/src/skin/legacy/legacyskinparser.cpp
+--- a/src/skin/legacy/legacyskinparser.cpp
++++ b/src/skin/legacy/legacyskinparser.cpp
+@@ -65,6 +65,7 @@
+ #include "widget/wrecordingduration.h"
+ #include "widget/wscrollable.h"
+ #include "widget/wsearchlineedit.h"
++#include "widget/wupdatepanel.h"
+ #include "widget/wwifipanel.h"
+ #include "widget/wsingletoncontainer.h"
+ #include "widget/wsizeawarestack.h"
+@@ -580,6 +581,8 @@
+         result = wrapWidget(parseSearchBox(node));
+     } else if (nodeName == "WifiPanel") {
+         result = wrapWidget(parseWifiPanel(node));
++    } else if (nodeName == "UpdatePanel") {
++        result = wrapWidget(parseUpdatePanel(node));
+     } else if (nodeName == "WidgetGroup") {
+         result = wrapWidget(parseWidgetGroup(node));
+     } else if (nodeName == "TrackWidgetGroup") {
+@@ -1485,6 +1488,19 @@
+ 
+     return pPanel;
+ }
++
++QWidget* LegacySkinParser::parseUpdatePanel(const QDomElement& node) {
++    // Pioneered: body of the software update page -- the status line and the
++    // live transcript of the updater. The buttons around it are plain skin
++    // widgets pressing [Library],update_* controls.
++    WUpdatePanel* pPanel = new WUpdatePanel(m_pParent);
++    commonWidgetSetup(node, pPanel, false);
++    pPanel->setup(node, *m_pContext);
++
++    m_pLibrary->bindUpdatePanel(pPanel);
++
++    return pPanel;
++}
+ 
+ QWidget* LegacySkinParser::parseCoverArt(const QDomElement& node) {
+     QString group = lookupNodeGroup(node);
+diff --git a/src/widget/wupdatepanel.h b/src/widget/wupdatepanel.h
+new file mode 100644
+--- /dev/null
++++ b/src/widget/wupdatepanel.h
+@@ -0,0 +1,60 @@
++#pragma once
++
++#include <QString>
++#include <QWidget>
++
++#include "widget/wbasewidget.h"
++
++class QDomNode;
++class QLabel;
++class QPlainTextEdit;
++class QProcess;
++class SkinContext;
++
++/// Pioneered software-update page: runs the on-Pi updater and shows its
++/// terminal output live, so an update can be done from the touchscreen
++/// instead of an ssh session.
++///
++/// The command is fixed in C++ rather than taken from the skin on purpose:
++/// this runs as root, and a skin is just a folder of XML a user can drop in.
++/// The updater is the one at kUpdateScript, installed there by the updater
++/// itself from r29 on.
++///
++/// Like WWifiPanel, this widget is only the dynamic part. BACK, UPDATE and
++/// REBOOT are ordinary skin buttons pressing [Library],update_* controls that
++/// LibraryControl forwards here (see LibraryControl::bindUpdatePanel); the
++/// widget reports back what the skin needs to lay itself out.
++class WUpdatePanel : public QWidget, public WBaseWidget {
++    Q_OBJECT
++  public:
++    explicit WUpdatePanel(QWidget* pParent = nullptr);
++    ~WUpdatePanel() override;
++
++    void setup(const QDomNode& node, const SkinContext& context);
++
++    void open();  // page shown
++    void close(); // page hidden (a running update is left running)
++    void run();   // start the updater
++    bool isRunning() const;
++
++  signals:
++    /// True while the updater is running: the skin hides UPDATE and BACK.
++    void runningChanged(bool running);
++    /// Emitted once the updater exits; ok means "restart to finish".
++    void finishedOk(bool ok);
++
++  private:
++    void append(const QString& text);
++    void appendNotice(const QString& line);
++    void readFromProcess();
++    void processFinished(int exitCode, bool crashed);
++    void setStatus(const QString& text, const char* state);
++
++    QLabel* m_pStatus;
++    QPlainTextEdit* m_pOutput;
++    QProcess* m_pProcess;
++    /// Tail of a partial line held back until its newline arrives, so a
++    /// progress line split across two reads is not shown twice.
++    QString m_pending;
++    bool m_sawFailure;
++};
+diff --git a/src/widget/wupdatepanel.cpp b/src/widget/wupdatepanel.cpp
+new file mode 100644
+--- /dev/null
++++ b/src/widget/wupdatepanel.cpp
+@@ -0,0 +1,202 @@
++#include "widget/wupdatepanel.h"
++
++#include <QLabel>
++#include <QPlainTextEdit>
++#include <QProcess>
++#include <QRegularExpression>
++#include <QScrollBar>
++#include <QScroller>
++#include <QStyle>
++#include <QVBoxLayout>
++#include <QtDebug>
++
++#include "moc_wupdatepanel.cpp"
++#include "skin/legacy/skincontext.h"
++
++namespace {
++
++/// Installed there by pi/update-pioneered.sh itself (r29 and later), so the
++/// path is stable whatever folder the operator originally ran it from.
++const QString kUpdateScript = QStringLiteral("/usr/local/bin/update-pioneered.sh");
++
++constexpr int kMaxLogBlocks = 2000;
++
++} // namespace
++
++WUpdatePanel::WUpdatePanel(QWidget* pParent)
++        : QWidget(pParent),
++          WBaseWidget(this),
++          m_pProcess(nullptr),
++          m_sawFailure(false) {
++    setAttribute(Qt::WA_StyledBackground, true);
++
++    auto* pLayout = new QVBoxLayout(this);
++    pLayout->setContentsMargins(0, 0, 0, 0);
++    pLayout->setSpacing(4);
++
++    m_pStatus = new QLabel(this);
++    m_pStatus->setObjectName(QStringLiteral("UpdateStatus"));
++    m_pStatus->setAlignment(Qt::AlignCenter);
++    m_pStatus->setWordWrap(true);
++    pLayout->addWidget(m_pStatus);
++
++    m_pOutput = new QPlainTextEdit(this);
++    m_pOutput->setObjectName(QStringLiteral("UpdateLog"));
++    m_pOutput->setReadOnly(true);
++    m_pOutput->setFocusPolicy(Qt::NoFocus);
++    m_pOutput->setLineWrapMode(QPlainTextEdit::NoWrap);
++    m_pOutput->setTextInteractionFlags(Qt::NoTextInteraction);
++    // A long apt run would otherwise grow without bound on a 1 GB Pi.
++    m_pOutput->setMaximumBlockCount(kMaxLogBlocks);
++    // Drag the log with a finger; there is no scroll wheel on this unit and
++    // the scrollbar is far too thin to hit reliably on a touchscreen.
++    QScroller::grabGesture(m_pOutput->viewport(), QScroller::LeftMouseButtonGesture);
++    pLayout->addWidget(m_pOutput, 1);
++
++    setStatus(QStringLiteral("TAP UPDATE TO CHECK FOR A NEW VERSION"), "idle");
++}
++
++WUpdatePanel::~WUpdatePanel() {
++    // Never kill a running apt: leaving dpkg half-done would be far worse
++    // than losing the window. Detach and let it finish.
++    if (m_pProcess) {
++        m_pProcess->disconnect(this);
++    }
++}
++
++void WUpdatePanel::setup(const QDomNode& node, const SkinContext& context) {
++    Q_UNUSED(node);
++    Q_UNUSED(context);
++}
++
++bool WUpdatePanel::isRunning() const {
++    return m_pProcess != nullptr;
++}
++
++void WUpdatePanel::open() {
++    if (!m_pProcess) {
++        m_pOutput->clear();
++        m_sawFailure = false;
++        setStatus(QStringLiteral("TAP UPDATE TO CHECK FOR A NEW VERSION"), "idle");
++    }
++}
++
++void WUpdatePanel::close() {
++    // Deliberately does not stop a running update.
++}
++
++void WUpdatePanel::run() {
++    if (m_pProcess) {
++        return;
++    }
++    m_sawFailure = false;
++    m_pending.clear();
++    m_pOutput->clear();
++    setStatus(QStringLiteral("UPDATING… DO NOT POWER OFF"), "running");
++
++    m_pProcess = new QProcess(this);
++    // The updater writes progress to both streams; the operator wants one
++    // transcript, in order, exactly as it would look in a terminal.
++    m_pProcess->setProcessChannelMode(QProcess::MergedChannels);
++    connect(m_pProcess,
++            &QProcess::readyRead,
++            this,
++            &WUpdatePanel::readFromProcess);
++    connect(m_pProcess,
++            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
++            this,
++            [this](int exitCode, QProcess::ExitStatus status) {
++                processFinished(exitCode, status != QProcess::NormalExit);
++            });
++    connect(m_pProcess,
++            &QProcess::errorOccurred,
++            this,
++            [this](QProcess::ProcessError error) {
++                if (error == QProcess::FailedToStart) {
++                    processFinished(-1, true);
++                }
++            });
++
++    // -n so a missing sudoers rule fails immediately with a readable message
++    // instead of blocking forever on a password prompt no one can answer:
++    // there is no terminal behind this window.
++    appendNotice(QStringLiteral("$ sudo -n %1 --no-reboot").arg(kUpdateScript));
++    emit runningChanged(true);
++    m_pProcess->start(QStringLiteral("sudo"),
++            {QStringLiteral("-n"), kUpdateScript, QStringLiteral("--no-reboot")});
++}
++
++void WUpdatePanel::readFromProcess() {
++    if (!m_pProcess) {
++        return;
++    }
++    m_pending += QString::fromUtf8(m_pProcess->readAll());
++    // apt draws progress with carriage returns; treat them as line breaks so
++    // the log reads top to bottom instead of overwriting itself.
++    m_pending.replace(QLatin1Char('\r'), QLatin1Char('\n'));
++    int newline = m_pending.indexOf(QLatin1Char('\n'));
++    while (newline >= 0) {
++        append(m_pending.left(newline));
++        m_pending = m_pending.mid(newline + 1);
++        newline = m_pending.indexOf(QLatin1Char('\n'));
++    }
++}
++
++void WUpdatePanel::processFinished(int exitCode, bool crashed) {
++    if (!m_pending.isEmpty()) {
++        append(m_pending);
++        m_pending.clear();
++    }
++    const bool ok = !crashed && exitCode == 0 && !m_sawFailure;
++    if (m_pProcess) {
++        m_pProcess->deleteLater();
++        m_pProcess = nullptr;
++    }
++    emit runningChanged(false);
++    if (ok) {
++        setStatus(QStringLiteral("UPDATE INSTALLED — TAP RESTART TO FINISH"), "ok");
++    } else if (crashed) {
++        appendNotice(QStringLiteral(
++                "could not run the updater. If this says it is not installed, "
++                "run it once by hand; if it says a password is required, add "
++                "the sudoers rule from the README."));
++        setStatus(QStringLiteral("UPDATE COULD NOT START"), "failed");
++    } else {
++        setStatus(QStringLiteral("UPDATE FAILED (exit %1) — NOTHING CHANGED")
++                          .arg(exitCode),
++                "failed");
++    }
++    emit finishedOk(ok);
++}
++
++void WUpdatePanel::append(const QString& text) {
++    QString line = text;
++    // The updater is a plain shell script, but apt emits the odd escape.
++    static const QRegularExpression kAnsi(
++            QStringLiteral("\x1b\\[[0-9;?]*[A-Za-z]"));
++    line.remove(kAnsi);
++    if (line.trimmed().isEmpty()) {
++        return;
++    }
++    if (line.contains(QStringLiteral("ERROR"), Qt::CaseSensitive) ||
++            line.startsWith(QStringLiteral("E: "))) {
++        m_sawFailure = true;
++    }
++    m_pOutput->appendPlainText(line);
++    m_pOutput->verticalScrollBar()->setValue(
++            m_pOutput->verticalScrollBar()->maximum());
++}
++
++void WUpdatePanel::appendNotice(const QString& line) {
++    m_pOutput->appendPlainText(line);
++    m_pOutput->verticalScrollBar()->setValue(
++            m_pOutput->verticalScrollBar()->maximum());
++}
++
++void WUpdatePanel::setStatus(const QString& text, const char* state) {
++    m_pStatus->setText(text);
++    m_pStatus->setProperty("state", QString::fromLatin1(state));
++    m_pStatus->style()->unpolish(m_pStatus);
++    m_pStatus->style()->polish(m_pStatus);
++    m_pStatus->update();
++}

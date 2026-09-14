@@ -687,6 +687,7 @@ WBeatSpinBox::up-button {
 }
 
 #SettingsPanel #SettingsWifi,
+#SettingsPanel #SettingsUpdate,
 #SettingsPanel #SettingsPowerOff,
 #SettingsPanel #SettingsRestart,
 #SettingsPanel #SettingsBack {
@@ -712,6 +713,7 @@ WBeatSpinBox::up-button {
    press state -- the second tap commits, and it should look committed, not
    like another arming step. */
 #SettingsPanel #SettingsWifi:pressed,
+#SettingsPanel #SettingsUpdate:pressed,
 #SettingsPanel #SettingsPowerOff:pressed,
 #SettingsPanel #SettingsRestart:pressed,
 #SettingsPanel #SettingsBack:pressed {
@@ -960,4 +962,110 @@ QPushButton#WifiRow[rowstate="armed"] {
   color: #5a5a66;
   font-size: 15px;
   font-weight: normal;
+}
+
+/************************************************************************/
+/*     Software update page (settings menu > SOFTWARE UPDATE)           */
+/************************************************************************/
+
+#UpdatePage {
+  background-color: #16161a;
+}
+
+#UpdateHeader {
+  background-color: #1a1a20;
+}
+
+#UpdateTitle {
+  color: #c3d541;
+  font-size: 18px;
+  font-weight: bold;
+  qproperty-alignment: AlignCenter;
+}
+
+#UpdateBack, #UpdateRun, #UpdateReboot {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #16161a, stop:1 black);
+  border: 2px solid #4a4a52;
+  border-radius: 4px;
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  margin: 6px 8px;
+}
+
+#UpdateBack:pressed, #UpdateRun:pressed, #UpdateReboot:pressed {
+  background-color: #1f1f26;
+  border: 2px solid #6a6a76;
+  color: white;
+}
+
+/* Armed face, and the restart that finishes the job: the same red the
+   menu's armed POWER OFF wears. */
+#UpdateRunArmed {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #c62d54, stop:1 #a62446);
+  border: 2px solid white;
+  border-radius: 4px;
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  margin: 6px 8px;
+}
+
+#UpdateReboot {
+  border: 2px solid #c3d541;
+  color: #c3d541;
+}
+
+/* The C++ panel (WUpdatePanel): plain Qt widgets, so type + id selectors. */
+#UpdatePanel {
+  background-color: transparent;
+  margin: 2px 12px;
+}
+
+#UpdateStatus {
+  color: #8f8f99;
+  font-size: 15px;
+  font-weight: bold;
+  padding: 4px;
+}
+
+#UpdateStatus[state="running"] {
+  color: #c3d541;
+}
+
+#UpdateStatus[state="ok"] {
+  color: #c3d541;
+}
+
+#UpdateStatus[state="failed"] {
+  color: #ff8fa3;
+}
+
+/* The transcript. Monospace so apt's columns line up the way they would in
+   a terminal; it is scrolled by dragging, not by the (hidden) scrollbar. */
+QPlainTextEdit#UpdateLog {
+  background-color: #0d0d10;
+  border: 1px solid #45454f;
+  border-radius: 3px;
+  color: #d0d0d6;
+  font-family: "DejaVu Sans Mono", monospace;
+  font-size: 12px;
+  padding: 6px;
+}
+
+QPlainTextEdit#UpdateLog QScrollBar:vertical {
+  background: transparent;
+  width: 6px;
+}
+
+QPlainTextEdit#UpdateLog QScrollBar::handle:vertical {
+  background: #45454f;
+  border-radius: 3px;
+}
+
+QPlainTextEdit#UpdateLog QScrollBar::add-line:vertical,
+QPlainTextEdit#UpdateLog QScrollBar::sub-line:vertical {
+  height: 0;
 }
