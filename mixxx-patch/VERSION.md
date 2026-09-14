@@ -365,3 +365,24 @@
     menu in `SettingsMenuLayer` (hidden while `wifi_page`), new `wifi.xml`
     page, `style.qss` styles the page and the plain-Qt rows inside the
     panel by `QPushButton#WifiRow[rowstate=…]`.
+21. `rekordbox-path-fallback.patch` (added 2026-09-14, r29) — the other half
+    of "some tracks do not load", and the one that was actually biting.
+    Patch 19 only covered a PDB/filesystem disagreement about Unicode
+    *normalisation*; the field case was a FAT stick mounted without
+    `utf8`/`iocharset=utf8`, where the kernel hands the accented character
+    back in its default charset. No normalisation of the PDB name can equal
+    that, so the load still did nothing. `pi/usb-mount.sh` fixes it at the
+    mount (r28), but a stick mounted by anything else — an older
+    `usb-mount.sh` that a partial update left in place, a desktop
+    automounter, a hand-typed `mount` — still lands here. So after the exact
+    path and both normalisations miss, `resolveUnicodePath()` lists the
+    directory and matches on the name's *ASCII skeleton* (the name with every
+    non-ASCII character removed): every mangling of an accent leaves the
+    skeleton identical, so the file is found whatever the mount did to it,
+    while a skeleton shared by two files — names differing only in accented
+    characters — is refused rather than guessed. The listing is cached per
+    directory and `thread_local`, so a whole stick in the wrong charset costs
+    one `readdir` per folder instead of one per track and the concurrent
+    per-device parse threads need no lock. A match logs a warning naming the
+    mount fix, since needing it at all means the stick is still mounted
+    wrongly. Touches `src/library/rekordbox/rekordboxfeature.cpp`.

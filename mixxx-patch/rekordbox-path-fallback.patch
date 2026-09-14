@@ -1,0 +1,149 @@
+Description: Find a rekordbox track whose name the mount cannot spell
+ Follow-up to rekordbox-unicode-paths.patch, which only covered the case where
+ the PDB and the filesystem disagree about Unicode *normalisation*. The field
+ report that prompted it turned out to be the other case: a FAT stick mounted
+ without utf8/iocharset=utf8 hands the accented character back in the kernel's
+ default charset, so no normalisation of the PDB name will ever equal it and
+ the load still did nothing.
+ .
+ pi/usb-mount.sh fixes that at the mount, but a stick mounted by anything else
+ (an older usb-mount.sh, a desktop automounter, a hand-typed mount) still lands
+ here, and "the track will not load" is a miserable thing to debug from behind
+ a pair of decks. So when the exact path and both normalisations miss, the
+ directory is listed and matched on its "ASCII skeleton": the name with every
+ non-ASCII character removed. Every mangling of an accent leaves the skeleton
+ identical, so the file is found whatever the mount did to its name, while two
+ files whose skeletons collide (names differing only in accented characters)
+ are refused rather than guessed at.
+ .
+ The listing is cached per directory and thread_local, so a whole stick in the
+ wrong charset costs one readdir per folder rather than one per track, and the
+ concurrent per-device parse threads stay out of each other's way without a
+ lock. A successful match is logged as a warning naming the mount fix, since
+ finding the file this way means the stick is still mounted wrongly.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -4,7 +4,9 @@
+ #include <rekordbox_anlz.h>
+ #include <rekordbox_pdb.h>
+ 
++#include <QDir>
+ #include <QFile>
++#include <QHash>
+ #include <QMap>
+ #include <QMessageBox>
+ #include <QSet>
+@@ -296,14 +298,42 @@
+     return text.remove(QChar('\x0'));
+ }
+ 
+-// Pioneered: resolve a track path whose accented characters may be stored in
+-// the PDB in a different Unicode normalisation form than the one the
+-// filesystem hands back. rekordbox on macOS writes decomposed (NFD) names to
+-// FAT32 while the PDB string can be composed (NFC), or vice versa on Windows,
+-// and a byte-exact lookup then misses a file that is plainly on the stick --
+-// the load silently does nothing. Only paths with non-ASCII characters can be
+-// affected, so the extra stat() is paid only for those; an ASCII path is
+-// returned untouched without touching the disk.
++// Pioneered: a track path whose non-ASCII characters the filesystem reports
++// differently from the way rekordbox wrote them into export.pdb. Two separate
++// causes, so two fallbacks:
++//
++//  1. Normalisation. rekordbox on macOS writes decomposed (NFD) names to FAT32
++//     while the PDB string can be composed (NFC), or vice versa on Windows. The
++//     two are the same text and the same bytes are on the stick, so simply
++//     asking for the other form finds the file.
++//
++//  2. Character set. A FAT stick mounted without utf8/iocharset=utf8 is handed
++//     to us in the kernel's default charset, so "Mama" with an acute accent
++//     comes back as some other single character (or U+FFFD) that no
++//     normalisation of the PDB name will ever equal. pi/usb-mount.sh fixes this
++//     at the mount, but a stick mounted by something else -- an older
++//     usb-mount.sh, a desktop automounter, a hand-typed mount -- still lands
++//     here. So as a last resort the directory is listed and matched on its
++//     "ASCII skeleton": the name with every non-ASCII character dropped. Every
++//     mangling of the accent leaves the skeleton identical, so the real file is
++//     found whatever the mount did to it, and an ambiguous skeleton (two files
++//     differing only in accented characters) is refused rather than guessed.
++//
++// Only paths with non-ASCII characters can be affected, so all of this is
++// skipped -- without touching the disk -- for an ASCII path.
++namespace {
++QString asciiSkeleton(const QString& name) {
++    QString skeleton;
++    skeleton.reserve(name.size());
++    for (const QChar& c : name) {
++        if (c.unicode() <= 0x7f) {
++            skeleton.append(c);
++        }
++    }
++    return skeleton;
++}
++} // namespace
++
+ QString resolveUnicodePath(const QString& path) {
+     bool ascii = true;
+     for (const QChar& c : path) {
+@@ -323,7 +353,57 @@
+     if (nfd != path && QFile::exists(nfd)) {
+         return nfd;
+     }
+-    return path;
++
++    const int slash = path.lastIndexOf(QLatin1Char('/'));
++    if (slash <= 0 || slash + 1 >= path.size()) {
++        return path;
++    }
++    const QString dirPath = path.left(slash);
++    const QString wanted = path.mid(slash + 1);
++    const QString wantedSkeleton = asciiSkeleton(wanted);
++    if (wantedSkeleton.isEmpty()) {
++        // Nothing ASCII to anchor on; matching would be a guess.
++        return path;
++    }
++    // One directory listing is reused for every track in it. A whole stick
++    // mounted in the wrong charset would otherwise re-read the same directory
++    // once per accented track, which on a big flat folder is the difference
++    // between an import that stutters and one that does not. thread_local
++    // because rekordbox devices are parsed on concurrent threads (one per
++    // stick) and this keeps them out of each other's way without a lock;
++    // rekordbox lays tracks out by folder, so caching just the directory in
++    // hand gets nearly all of the benefit for none of the bookkeeping.
++    thread_local QString cachedDir;
++    thread_local QHash<QString, QString> cachedSkeletons; // skeleton -> name
++    if (cachedDir != dirPath) {
++        QDir dir(dirPath);
++        if (!dir.exists()) {
++            return path;
++        }
++        cachedDir = dirPath;
++        cachedSkeletons.clear();
++        const QStringList entries = dir.entryList(QDir::Files);
++        for (const QString& entry : entries) {
++            const QString skeleton = asciiSkeleton(entry);
++            if (skeleton.isEmpty()) {
++                continue;
++            }
++            // A second file with the same skeleton makes it useless as a key:
++            // mark it so the lookup below refuses rather than picks one.
++            if (cachedSkeletons.contains(skeleton)) {
++                cachedSkeletons.insert(skeleton, QString());
++            } else {
++                cachedSkeletons.insert(skeleton, entry);
++            }
++        }
++    }
++    const QString match = cachedSkeletons.value(wantedSkeleton);
++    if (match.isEmpty()) {
++        return path;
++    }
++    qWarning() << "Rekordbox: matched" << wanted << "to" << match
++               << "- the stick is not mounted as UTF-8 (see pi/usb-mount.sh)";
++    return dirPath + QLatin1Char('/') + match;
+ }
+ 
+ int createDevicePlaylist(QSqlDatabase& database, const QString& devicePath) {

@@ -38,10 +38,11 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   * **LOAD returns you to the Overview tab** once the track is actually on the
     deck — a load refused because the deck is still playing leaves you in the
     browser with the "PAUSE DECK TO LOAD" banner and your place in the list
-  * **Tracks with accented filenames load** ("La Mamá …"): FAT sticks are
-    mounted with UTF-8 names, and the rekordbox import falls back to the other
-    Unicode normalisation form when a path with non-ASCII characters is not
-    found as written. A row whose file really is missing now shows a
+  * **Tracks with accented filenames load** ("La Mamá …"), however the stick
+    happens to be mounted: FAT sticks are mounted with UTF-8 names, and when a
+    path with non-ASCII characters is not found as written the import retries
+    the other Unicode normalisation form and then matches the file by the
+    ASCII part of its name. A row whose file really is missing shows a
     **TRACK FILE NOT FOUND ON USB** banner instead of ignoring the tap
   * **Key traffic light**: the Key cell lights up green when the track is
     Camelot-compatible with the master deck (the deck that started playing
