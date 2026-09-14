@@ -24,9 +24,21 @@ if findmnt -S "/dev/$DEVICE" >/dev/null 2>&1; then
     exit 0
 fi
 
+# Mount options. FAT sticks -- what rekordbox exports to -- additionally get
+# utf8=1: without it the kernel presents filenames in its default charset
+# (iso8859-1 or ascii on Pi kernels), so a title with an accented character
+# ("La Mamá") is not the UTF-8 name rekordbox wrote into export.pdb, Mixxx
+# cannot find the file, and LOAD silently does nothing for that track. exFAT,
+# NTFS and HFS+ already default to UTF-8 names and take no such option.
+OPTS="uid=1000,gid=1000,umask=022"
+FSTYPE="$(blkid -o value -s TYPE "/dev/$DEVICE" 2>/dev/null)"
+case "$FSTYPE" in
+    vfat|msdos) OPTS="$OPTS,utf8=1" ;;
+esac
+
 for mp in "${MOUNT_POINTS[@]}"; do
     if ! mountpoint -q "$mp"; then
-        if mount -o uid=1000,gid=1000,umask=022 "/dev/$DEVICE" "$mp"; then
+        if mount -o "$OPTS" "/dev/$DEVICE" "$mp"; then
             echo "Mounted /dev/$DEVICE at $mp"
             exit 0
         fi

@@ -82,6 +82,17 @@ rm -rf "$SKIN_HOME/.mixxx/skins/Pioneered"
 cp -r "$SKIN_SRC" "$SKIN_HOME/.mixxx/skins/Pioneered"
 chown -R "$SKIN_USER:" "$SKIN_HOME/.mixxx/skins/Pioneered"
 
+# --- Install USB auto-mount layer -------------------------------------------
+# The mount script carries fixes of its own (r28: UTF-8 filenames on FAT
+# sticks), so keep the installed copies in step with the release. Idempotent;
+# the reboot below remounts any stick with the new options.
+echo "==> Installing USB auto-mount layer"
+install -m 755 "$SKIN_SRC/pi/usb-mount.sh" "$SKIN_SRC/pi/usb-umount.sh" /usr/local/bin/
+install -m 644 "$SKIN_SRC/pi/99-usb-automount.rules" /etc/udev/rules.d/
+install -m 644 "$SKIN_SRC/pi/usb-mount@.service" /etc/systemd/system/
+udevadm control --reload
+systemctl daemon-reload
+
 # --- Report + reboot ---------------------------------------------------------
 echo
 echo "==> Installed: $(dpkg-query -W -f='${Package} ${Version}\n' mixxx)"

@@ -305,3 +305,26 @@
     playlists actually populate; before that they imported empty and the
     ordering weakness was hidden. Touches
     `src/library/rekordbox/rekordboxfeature.cpp`.
+19. `rekordbox-unicode-paths.patch` (added 2026-09-14, r28) — the Mixxx half
+    of "some tracks do not load". The reported file (`BASTI - La Mamá …mp3`)
+    decodes cleanly (ffmpeg, CBR 320 kbps, ID3v2.3); what fails is *finding*
+    it: the `á` makes the on-disk name depend on how the stick is mounted and
+    on which Unicode normalisation form rekordbox wrote into `export.pdb`.
+    The root-cause fix is in `pi/usb-mount.sh` (FAT sticks now mounted with
+    `utf8=1`; without it the kernel names files in its default charset and
+    the UTF-8 path from the PDB never matches, so `TrackDAO::addTracksAddFile`
+    logs "File not found" and `loadSelectedTrackToGroup` silently drops the
+    tap). This patch covers what Mixxx can do on its own: `insertTrack` in
+    `rekordboxfeature.cpp` runs a non-ASCII path that does not exist as
+    written through `resolveUnicodePath()`, which retries it in NFC and NFD
+    (rekordbox on macOS writes decomposed names to FAT32 while the PDB string
+    may be composed, or vice versa); ASCII paths never touch the disk. And
+    `WTrackTableView::loadSelectedTrackToGroup` raises `[Library],load_missing`
+    when the model has no loadable track for the row, which the skin shows as
+    a "TRACK FILE NOT FOUND ON USB" banner (`LibraryControl` starts the shared
+    banner timer and clears it, exactly like `load_blocked`). Touches
+    `src/library/rekordbox/rekordboxfeature.cpp`,
+    `src/widget/wtracktableview.cpp`, `src/library/librarycontrol.{h,cpp}`.
+    Skin side: `skin.xml` banner + `style.qss`. Pi side: `pi/usb-mount.sh`,
+    and `pi/update-pioneered.sh` now installs the `pi/` layer on every update
+    so mount-script fixes actually reach the unit.

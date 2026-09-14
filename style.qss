@@ -415,8 +415,8 @@ WLabel {
 }
 
 /* Centered popup banners (stacked overlay in skin.xml) */
-#UsbLockedBanner, #UsbEjectFailedBanner, #LoadBlockedBanner, #RestartingBanner,
-#PoweringOffBanner, #PowerOffFailedBanner {
+#UsbLockedBanner, #UsbEjectFailedBanner, #LoadBlockedBanner, #TrackMissingBanner,
+#RestartingBanner, #PoweringOffBanner, #PowerOffFailedBanner {
   background-color: #b6294c;
   border: 2px solid white;
   border-radius: 8px;

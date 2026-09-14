@@ -38,6 +38,11 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   * **LOAD returns you to the Overview tab** once the track is actually on the
     deck — a load refused because the deck is still playing leaves you in the
     browser with the "PAUSE DECK TO LOAD" banner and your place in the list
+  * **Tracks with accented filenames load** ("La Mamá …"): FAT sticks are
+    mounted with UTF-8 names, and the rekordbox import falls back to the other
+    Unicode normalisation form when a path with non-ASCII characters is not
+    found as written. A row whose file really is missing now shows a
+    **TRACK FILE NOT FOUND ON USB** banner instead of ignoring the tap
   * **Key traffic light**: the Key cell lights up green when the track is
     Camelot-compatible with the master deck (the deck that started playing
     most recently); keys are always shown as note names (Am, F♯m, …)
@@ -120,7 +125,8 @@ Library*, default 8 — set to Off for the stock manual row height).
 ### 3. USB auto-mount layer
 
 The skin's USB A/B buttons expect sticks at `/media/USBA` and `/media/USBB`.
-Install the udev/systemd machinery from `pi/`:
+Install the udev/systemd machinery from `pi/` (`update-pioneered.sh` does this
+for you on every update):
 
 ```bash
 sudo cp pi/99-usb-automount.rules /etc/udev/rules.d/

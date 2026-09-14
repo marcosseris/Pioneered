@@ -1,0 +1,139 @@
+Description: Rekordbox USB tracks with accented filenames load again, and a
+ missing file says so instead of ignoring the tap.
+ .
+ Two halves of one field report: "some tracks do not load". The file in
+ question ("BASTI - La Mamá ...") decodes cleanly; what fails is finding it.
+ The mount side of the fix lives in pi/usb-mount.sh (FAT sticks are now
+ mounted with utf8=1, so the kernel hands back the same UTF-8 bytes rekordbox
+ wrote into the PDB). This patch covers what Mixxx itself can do:
+ .
+ 1. When a rekordbox device is imported, a track path containing non-ASCII
+    characters that does not exist as written is retried in the other Unicode
+    normalisation form (NFC <-> NFD). rekordbox on macOS writes decomposed
+    names to FAT32 while the PDB string may be composed, or vice versa, and a
+    byte-exact lookup then misses a file that is plainly on the stick. ASCII
+    paths never touch the disk, so the import cost is unchanged for them.
+ .
+ 2. WTrackTableView::loadSelectedTrackToGroup raises [Library],load_missing
+    when the model has no loadable track for the selected row. Until now that
+    tap did nothing at all; the Pioneered skin binds a "TRACK FILE NOT FOUND"
+    banner to the control, cleared by LibraryControl's shared banner timer
+    like load_blocked.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -4,6 +4,7 @@
+ #include <rekordbox_anlz.h>
+ #include <rekordbox_pdb.h>
+ 
++#include <QFile>
+ #include <QMap>
+ #include <QMessageBox>
+ #include <QSet>
+@@ -295,6 +296,36 @@
+     return text.remove(QChar('\x0'));
+ }
+ 
++// Pioneered: resolve a track path whose accented characters may be stored in
++// the PDB in a different Unicode normalisation form than the one the
++// filesystem hands back. rekordbox on macOS writes decomposed (NFD) names to
++// FAT32 while the PDB string can be composed (NFC), or vice versa on Windows,
++// and a byte-exact lookup then misses a file that is plainly on the stick --
++// the load silently does nothing. Only paths with non-ASCII characters can be
++// affected, so the extra stat() is paid only for those; an ASCII path is
++// returned untouched without touching the disk.
++QString resolveUnicodePath(const QString& path) {
++    bool ascii = true;
++    for (const QChar& c : path) {
++        if (c.unicode() > 0x7f) {
++            ascii = false;
++            break;
++        }
++    }
++    if (ascii || QFile::exists(path)) {
++        return path;
++    }
++    const QString nfc = path.normalized(QString::NormalizationForm_C);
++    if (nfc != path && QFile::exists(nfc)) {
++        return nfc;
++    }
++    const QString nfd = path.normalized(QString::NormalizationForm_D);
++    if (nfd != path && QFile::exists(nfd)) {
++        return nfd;
++    }
++    return path;
++}
++
+ int createDevicePlaylist(QSqlDatabase& database, const QString& devicePath) {
+     int playlistID = kInvalidPlaylistId;
+ 
+@@ -369,7 +400,7 @@
+     QString album = albumsMap[track->album_id()];
+     QString year = QString::number(track->year());
+     QString genre = genresMap[track->genre_id()];
+-    QString location = devicePath + getText(track->file_path());
++    QString location = resolveUnicodePath(devicePath + getText(track->file_path()));
+     float bpm = static_cast<float>(track->tempo() / 100.0);
+     int bitrate = static_cast<int>(track->bitrate());
+     QString key = keysMap[track->key_id()];
+diff --git a/src/widget/wtracktableview.cpp b/src/widget/wtracktableview.cpp
+--- a/src/widget/wtracktableview.cpp
++++ b/src/widget/wtracktableview.cpp
+@@ -1437,6 +1437,13 @@
+         if (!PlayerManager::isPreviewDeckGroup(group)) {
+             ControlObject::set(ConfigKey("[Tab]", "overview"), 1.0);
+         }
++    } else if (pTrackModel) {
++        // Pioneered: the row has no loadable track. On a rekordbox USB that
++        // means the file the database points at is not where the stick says
++        // it is -- typically a filename the mount cannot represent -- and
++        // until now the tap simply did nothing. Say so; the skin shows a
++        // "TRACK FILE NOT FOUND" banner bound to this control.
++        ControlObject::set(ConfigKey("[Library]", "load_missing"), 1.0);
+     }
+ }
+ 
+diff --git a/src/library/librarycontrol.h b/src/library/librarycontrol.h
+--- a/src/library/librarycontrol.h
++++ b/src/library/librarycontrol.h
+@@ -182,6 +182,7 @@
+     std::unique_ptr<ControlPushButton> m_pUsbLocked;
+     std::unique_ptr<ControlPushButton> m_pUsbEjectFailed;
+     std::unique_ptr<ControlPushButton> m_pLoadBlocked;
++    std::unique_ptr<ControlPushButton> m_pLoadMissing;
+     QTimer m_holdFlashTimer;
+     QTimer m_bannerClearTimer;
+     QElapsedTimer m_holdElapsed;
+diff --git a/src/library/librarycontrol.cpp b/src/library/librarycontrol.cpp
+--- a/src/library/librarycontrol.cpp
++++ b/src/library/librarycontrol.cpp
+@@ -288,6 +288,18 @@
+                     m_bannerClearTimer.start();
+                 }
+             });
++    // Set from WTrackTableView when the selected row has no loadable file
++    // (rekordbox entry whose file is not on the stick). Same banner timing.
++    m_pLoadMissing = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "load_missing"));
++    connect(m_pLoadMissing.get(),
++            &ControlPushButton::valueChanged,
++            this,
++            [this](double value) {
++                if (value > 0.0) {
++                    m_bannerClearTimer.start();
++                }
++            });
+ 
+     // Pioneered hold-to-restart: the skin's LOAD buttons press
+     // restart_hold_1/2 alongside LoadSelectedTrack (1 on press, 0 on
+@@ -1697,6 +1709,7 @@
+     m_pUsbLocked->setAndConfirm(0.0);
+     m_pUsbEjectFailed->setAndConfirm(0.0);
+     m_pLoadBlocked->setAndConfirm(0.0);
++    m_pLoadMissing->setAndConfirm(0.0);
+     m_pRestarting->setAndConfirm(0.0);
+     m_pPoweringOff->setAndConfirm(0.0);
+     m_pPowerOffFailed->setAndConfirm(0.0);
