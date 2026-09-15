@@ -420,3 +420,17 @@
     `--no-reboot` and installs itself to `/usr/local/bin/` — by temp file and
     rename, never a copy over itself, since bash reads a script as it runs
     and this script may *be* the one being replaced.
+
+    Amended r30: `sudo -n` has two refusals of its own - `command not found`
+    when the updater has never been installed at that path, and `a password
+    is required` when the sudoers rule is missing - and both exit 1 with one
+    line, exactly like an update that ran and failed. The page therefore
+    ended at "UPDATE FAILED (exit 1)" for the only two problems a fresh unit
+    actually hits; the readable message `-n` was chosen for only ever
+    appeared when `sudo` itself could not be started, which never happens.
+    `WUpdatePanel` now reads the two off the transcript as it scrolls past
+    (`StartProblem`) and ends on "UPDATER NOT INSTALLED" or "UPDATE NOT
+    PERMITTED", printing the command that fixes each. Neither can be fixed
+    from the touchscreen: installing the updater is root work outside what
+    the sudoers rule permits, which is why the page names a shell command
+    rather than offering a button.

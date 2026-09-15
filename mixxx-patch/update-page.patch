@@ -458,7 +458,7 @@ diff --git a/src/widget/wupdatepanel.h b/src/widget/wupdatepanel.h
 new file mode 100644
 --- /dev/null
 +++ b/src/widget/wupdatepanel.h
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,70 @@
 +#pragma once
 +
 +#include <QString>
@@ -518,12 +518,22 @@ new file mode 100644
 +    /// progress line split across two reads is not shown twice.
 +    QString m_pending;
 +    bool m_sawFailure;
++    /// Why sudo refused before the updater ever ran. Both of its refusals
++    /// are one line and exit 1, indistinguishable from a failed update, but
++    /// they are the two a fresh install actually hits and each has its own
++    /// fix - so they are told apart and the fix is spelled out on screen.
++    enum class StartProblem {
++        None,
++        ScriptMissing,  ///< sudo: <script>: command not found
++        NeedsPassword,  ///< sudo: a password is required
++    };
++    StartProblem m_startProblem;
 +};
 diff --git a/src/widget/wupdatepanel.cpp b/src/widget/wupdatepanel.cpp
 new file mode 100644
 --- /dev/null
 +++ b/src/widget/wupdatepanel.cpp
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,238 @@
 +#include "widget/wupdatepanel.h"
 +
 +#include <QLabel>
@@ -553,7 +563,8 @@ new file mode 100644
 +        : QWidget(pParent),
 +          WBaseWidget(this),
 +          m_pProcess(nullptr),
-+          m_sawFailure(false) {
++          m_sawFailure(false),
++          m_startProblem(StartProblem::None) {
 +    setAttribute(Qt::WA_StyledBackground, true);
 +
 +    auto* pLayout = new QVBoxLayout(this);
@@ -603,6 +614,7 @@ new file mode 100644
 +    if (!m_pProcess) {
 +        m_pOutput->clear();
 +        m_sawFailure = false;
++        m_startProblem = StartProblem::None;
 +        setStatus(QStringLiteral("TAP UPDATE TO CHECK FOR A NEW VERSION"), "idle");
 +    }
 +}
@@ -616,6 +628,7 @@ new file mode 100644
 +        return;
 +    }
 +    m_sawFailure = false;
++    m_startProblem = StartProblem::None;
 +    m_pending.clear();
 +    m_pOutput->clear();
 +    setStatus(QStringLiteral("UPDATING… DO NOT POWER OFF"), "running");
@@ -687,6 +700,30 @@ new file mode 100644
 +                "run it once by hand; if it says a password is required, add "
 +                "the sudoers rule from the README."));
 +        setStatus(QStringLiteral("UPDATE COULD NOT START"), "failed");
++    } else if (m_startProblem == StartProblem::ScriptMissing) {
++        // The updater installs itself to kUpdateScript, so a unit that last
++        // updated from a shell copy older than r29 has never had it put
++        // there. Nothing on screen can fix that: installing it is root work
++        // outside what the sudoers rule allows, so name the one command.
++        appendNotice(QStringLiteral(
++                "The updater is not installed on this unit yet, so there is "
++                "nothing here to run. It installs itself the first time it "
++                "runs, so run it once from a shell on the Pi:\n"
++                "  curl -fsSL https://raw.githubusercontent.com/ogg755/"
++                "Pioneered/master/pi/update-pioneered.sh -o /tmp/u.sh\n"
++                "  sudo bash /tmp/u.sh\n"
++                "After that this button works on its own."));
++        setStatus(QStringLiteral("UPDATER NOT INSTALLED — SEE THE LOG"),
++                "failed");
++    } else if (m_startProblem == StartProblem::NeedsPassword) {
++        appendNotice(QStringLiteral(
++                "sudo wants a password, and there is no keyboard behind this "
++                "window to type one. Add the passwordless rule (README, "
++                "\"Update-button permission\") from a shell on the Pi:\n"
++                "  echo \"$USER ALL=(ALL) NOPASSWD: /usr/local/bin/"
++                "update-pioneered.sh\" | sudo tee /etc/sudoers.d/mixxx-update"));
++        setStatus(QStringLiteral("UPDATE NOT PERMITTED — SEE THE LOG"),
++                "failed");
 +    } else {
 +        setStatus(QStringLiteral("UPDATE FAILED (exit %1) — NOTHING CHANGED")
 +                          .arg(exitCode),
@@ -707,6 +744,15 @@ new file mode 100644
 +    if (line.contains(QStringLiteral("ERROR"), Qt::CaseSensitive) ||
 +            line.startsWith(QStringLiteral("E: "))) {
 +        m_sawFailure = true;
++    }
++    // sudo's own refusals. It exits 1 like a failed update would, so they are
++    // caught here by what they say, while the line is going past.
++    if (line.startsWith(QStringLiteral("sudo: "))) {
++        if (line.contains(QStringLiteral("command not found"))) {
++            m_startProblem = StartProblem::ScriptMissing;
++        } else if (line.contains(QStringLiteral("password is required"))) {
++            m_startProblem = StartProblem::NeedsPassword;
++        }
 +    }
 +    m_pOutput->appendPlainText(line);
 +    m_pOutput->verticalScrollBar()->setValue(
