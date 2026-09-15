@@ -15,8 +15,22 @@
       like a phone keyboard. Punctuation keys carry their character's
       decimal code point in the control name ("c33" is "!") because the
       characters themselves cannot name a control.
+
+      Sizing. Every key is the same size on every row, which takes two
+      things. Vertically, the digit row and the modifier row are fixed at
+      kb_row_h and the letter/punctuation layer takes the rest - without
+      that the layer counts as ONE expanding child next to those two rows
+      and its three rows share a third of the height, a third as tall as
+      the digits. Horizontally, a key is capped at 88px wide
+      (templates/kb_key.xml) and each row is flanked by a KbPad that
+      soaks up the slack, so a short row is centred instead of stretching
+      its keys to fill the width. The modifier row has no pads: the space
+      bar is the one key left uncapped, so it takes the slack there.
     Variables:
       kb_prefix:       "search" or "wifi" (see above).
+      kb_row_h:        height of one key row, in px. The caller's keyboard
+                       wrapper must be exactly five of these tall (the
+                       Search page: 5 x 36 = 180; Wi-Fi: 5 x 40 = 200).
       kb_done_control: what the Done key presses. The Search page passes
                        [Skin],show_keyboard (a toggle: Done hides the
                        keyboard); the Wi-Fi page passes
@@ -28,7 +42,8 @@
     <Layout>vertical</Layout>
     <SizePolicy>me,me</SizePolicy>
     <Children>
-      <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+      <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><Size>0me,<Variable name="kb_row_h"/>f</Size><Children>
+        <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
         <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">1</SetVariable><SetVariable name="key_shift">1</SetVariable><SetVariable name="key_char">1</SetVariable></Template>
         <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">2</SetVariable><SetVariable name="key_shift">2</SetVariable><SetVariable name="key_char">2</SetVariable></Template>
         <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">3</SetVariable><SetVariable name="key_shift">3</SetVariable><SetVariable name="key_char">3</SetVariable></Template>
@@ -39,6 +54,7 @@
         <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">8</SetVariable><SetVariable name="key_shift">8</SetVariable><SetVariable name="key_char">8</SetVariable></Template>
         <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">9</SetVariable><SetVariable name="key_shift">9</SetVariable><SetVariable name="key_char">9</SetVariable></Template>
         <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">0</SetVariable><SetVariable name="key_shift">0</SetVariable><SetVariable name="key_char">0</SetVariable></Template>
+        <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
       </Children></WidgetGroup>
 
       <!-- Letter layer: shown while the ?123 latch is off. -->
@@ -48,6 +64,7 @@
         <SizePolicy>me,me</SizePolicy>
         <Children>
           <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">q</SetVariable><SetVariable name="key_shift">Q</SetVariable><SetVariable name="key_char">q</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">w</SetVariable><SetVariable name="key_shift">W</SetVariable><SetVariable name="key_char">w</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">e</SetVariable><SetVariable name="key_shift">E</SetVariable><SetVariable name="key_char">e</SetVariable></Template>
@@ -58,8 +75,10 @@
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">i</SetVariable><SetVariable name="key_shift">I</SetVariable><SetVariable name="key_char">i</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">o</SetVariable><SetVariable name="key_shift">O</SetVariable><SetVariable name="key_char">o</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">p</SetVariable><SetVariable name="key_shift">P</SetVariable><SetVariable name="key_char">p</SetVariable></Template>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
           </Children></WidgetGroup>
           <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">a</SetVariable><SetVariable name="key_shift">A</SetVariable><SetVariable name="key_char">a</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">s</SetVariable><SetVariable name="key_shift">S</SetVariable><SetVariable name="key_char">s</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">d</SetVariable><SetVariable name="key_shift">D</SetVariable><SetVariable name="key_char">d</SetVariable></Template>
@@ -69,8 +88,10 @@
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">j</SetVariable><SetVariable name="key_shift">J</SetVariable><SetVariable name="key_char">j</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">k</SetVariable><SetVariable name="key_shift">K</SetVariable><SetVariable name="key_char">k</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">l</SetVariable><SetVariable name="key_shift">L</SetVariable><SetVariable name="key_char">l</SetVariable></Template>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
           </Children></WidgetGroup>
           <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">z</SetVariable><SetVariable name="key_shift">Z</SetVariable><SetVariable name="key_char">z</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">x</SetVariable><SetVariable name="key_shift">X</SetVariable><SetVariable name="key_char">x</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">c</SetVariable><SetVariable name="key_shift">C</SetVariable><SetVariable name="key_char">c</SetVariable></Template>
@@ -78,6 +99,7 @@
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">b</SetVariable><SetVariable name="key_shift">B</SetVariable><SetVariable name="key_char">b</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">n</SetVariable><SetVariable name="key_shift">N</SetVariable><SetVariable name="key_char">n</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">m</SetVariable><SetVariable name="key_shift">M</SetVariable><SetVariable name="key_char">m</SetVariable></Template>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
           </Children></WidgetGroup>
         </Children>
         <Connection>
@@ -95,6 +117,7 @@
         <SizePolicy>me,me</SizePolicy>
         <Children>
           <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">!</SetVariable><SetVariable name="key_shift">!</SetVariable><SetVariable name="key_char">c33</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">@</SetVariable><SetVariable name="key_shift">@</SetVariable><SetVariable name="key_char">c64</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">#</SetVariable><SetVariable name="key_shift">#</SetVariable><SetVariable name="key_char">c35</SetVariable></Template>
@@ -106,8 +129,10 @@
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">(</SetVariable><SetVariable name="key_shift">(</SetVariable><SetVariable name="key_char">c40</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">)</SetVariable><SetVariable name="key_shift">)</SetVariable><SetVariable name="key_char">c41</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">~</SetVariable><SetVariable name="key_shift">~</SetVariable><SetVariable name="key_char">c126</SetVariable></Template>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
           </Children></WidgetGroup>
           <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">-</SetVariable><SetVariable name="key_shift">-</SetVariable><SetVariable name="key_char">c45</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">_</SetVariable><SetVariable name="key_shift">_</SetVariable><SetVariable name="key_char">c95</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">=</SetVariable><SetVariable name="key_shift">=</SetVariable><SetVariable name="key_char">c61</SetVariable></Template>
@@ -119,8 +144,10 @@
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">;</SetVariable><SetVariable name="key_shift">;</SetVariable><SetVariable name="key_char">c59</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">:</SetVariable><SetVariable name="key_shift">:</SetVariable><SetVariable name="key_char">c58</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">`</SetVariable><SetVariable name="key_shift">`</SetVariable><SetVariable name="key_char">c96</SetVariable></Template>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
           </Children></WidgetGroup>
           <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">&apos;</SetVariable><SetVariable name="key_shift">&apos;</SetVariable><SetVariable name="key_char">c39</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">&quot;</SetVariable><SetVariable name="key_shift">&quot;</SetVariable><SetVariable name="key_char">c34</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">,</SetVariable><SetVariable name="key_shift">,</SetVariable><SetVariable name="key_char">c44</SetVariable></Template>
@@ -131,6 +158,7 @@
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">?</SetVariable><SetVariable name="key_shift">?</SetVariable><SetVariable name="key_char">c63</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">\</SetVariable><SetVariable name="key_shift">\</SetVariable><SetVariable name="key_char">c92</SetVariable></Template>
             <Template src="skin:templates/kb_key.xml"><SetVariable name="key_label">|</SetVariable><SetVariable name="key_shift">|</SetVariable><SetVariable name="key_char">c124</SetVariable></Template>
+            <WidgetGroup><ObjectName>KbPad</ObjectName><SizePolicy>me,me</SizePolicy></WidgetGroup>
           </Children></WidgetGroup>
         </Children>
         <Connection>
@@ -141,10 +169,11 @@
 
       <!-- Modifier row. SHIFT and ?123 are latches (TOGGLE controls, so a
            tap flips them); the rest are plain presses. -->
-      <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><SizePolicy>me,me</SizePolicy><Children>
+      <WidgetGroup><ObjectName>KbRow</ObjectName><Layout>horizontal</Layout><Size>0me,<Variable name="kb_row_h"/>f</Size><Children>
         <PushButton>
           <ObjectName>KbShift</ObjectName>
           <SizePolicy>me,me</SizePolicy>
+          <MaximumSize>132,-1</MaximumSize>
           <NumberStates>2</NumberStates>
           <State><Number>0</Number><Text>&#8679;</Text></State>
           <State><Number>1</Number><Text>&#8679;</Text></State>
@@ -156,6 +185,7 @@
         <PushButton>
           <ObjectName>KbSymbols</ObjectName>
           <SizePolicy>me,me</SizePolicy>
+          <MaximumSize>132,-1</MaximumSize>
           <NumberStates>2</NumberStates>
           <State><Number>0</Number><Text>?123</Text></State>
           <State><Number>1</Number><Text>ABC</Text></State>
@@ -167,6 +197,7 @@
         <PushButton>
           <ObjectName>KbBackspace</ObjectName>
           <SizePolicy>me,me</SizePolicy>
+          <MaximumSize>132,-1</MaximumSize>
           <NumberStates>1</NumberStates>
           <State><Number>0</Number><Text>&#9003;</Text></State>
           <Connection>
@@ -189,6 +220,7 @@
         <PushButton>
           <ObjectName>KbClear</ObjectName>
           <SizePolicy>me,me</SizePolicy>
+          <MaximumSize>132,-1</MaximumSize>
           <NumberStates>1</NumberStates>
           <State><Number>0</Number><Text>clear</Text></State>
           <Connection>
@@ -206,6 +238,7 @@
         <PushButton>
           <ObjectName>KbDone</ObjectName>
           <SizePolicy>me,me</SizePolicy>
+          <MaximumSize>132,-1</MaximumSize>
           <NumberStates>2</NumberStates>
           <State><Number>0</Number><Text><Variable name="kb_done_label"/></Text></State>
           <State><Number>1</Number><Text><Variable name="kb_done_label"/></Text></State>

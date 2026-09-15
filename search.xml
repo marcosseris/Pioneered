@@ -36,6 +36,7 @@
         <Size>0me,180f</Size>
         <Children>
           <Template src="skin:keyboard.xml">
+            <SetVariable name="kb_row_h">36</SetVariable>
             <SetVariable name="kb_prefix">search</SetVariable>
             <SetVariable name="kb_done_control">[Skin],show_keyboard</SetVariable>
             <SetVariable name="kb_done_label">Done</SetVariable>

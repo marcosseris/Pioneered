@@ -128,6 +128,7 @@
         <Size>0me,200f</Size>
         <Children>
           <Template src="skin:keyboard.xml">
+            <SetVariable name="kb_row_h">40</SetVariable>
             <SetVariable name="kb_prefix">wifi</SetVariable>
             <SetVariable name="kb_done_control">[Library],wifi_connect</SetVariable>
             <SetVariable name="kb_done_label">CONNECT</SetVariable>
