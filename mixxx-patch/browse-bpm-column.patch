@@ -1,0 +1,214 @@
+Description: BPM column in the browse view
+ The Rekordbox views showed a fixed set of #, Title, Artist, Key, Duration.
+ BPM is the other number a DJ reads when picking the next track, and it was
+ already imported from the PDB (rekordboxfeature.cpp binds :bpm from
+ track->tempo()) and already present in the track source's column list -- it
+ was simply never shown. The visible set becomes #, Title, Artist, BPM, Key,
+ Duration, with BPM sized to content next to Key on the right.
+ .
+ Three things had to be fixed for the column to actually arrive and look
+ right:
+ .
+ 1. A column added to the set would not appear on any unit that had already
+    run an earlier version. WTrackTableViewHeader::restoreHeaderState() hides
+    every section and then re-shows only those the saved state lists, and the
+    saved state (persisted in mixxxdb.sqlite via SettingsDAO, so it survives
+    reinstalls of the deb) records BPM as hidden from when it was internal.
+    WTrackTableView::setTrackModel() now re-shows every non-internal column
+    for a model with fixedColumnLayout(): for those models isColumnInternal()
+    *is* the visible set and has to win over restored state. This fixes the
+    whole class of bug, not just this column -- every future change to the set
+    would otherwise be invisible on exactly the units that already have the
+    product installed.
+ .
+ 2. Every BPM cell would have drawn an indeterminate BPM-lock indicator. The
+    Rekordbox table has no bpm_lock column, so rawSiblingValue() returns null
+    for it and BaseTrackTableModel::data() fell through to PartiallyChecked.
+    A model without the lock column has no lock state to report and now
+    returns no check state at all.
+ .
+ 3. BPMDelegate is only installed when the model has a bpm_lock column. The
+    delegate exists to draw and toggle that indicator, and it paints the cell
+    through a hidden QCheckBox named LibraryBPMButton as the style source --
+    which the skin does not style, so the cell would not have matched the rest
+    of the list. Without the delegate the BPM cell renders through the view's
+    default path, like Title or Duration. Nothing is lost on the Rekordbox
+    views: BaseExternalPlaylistModel::flags() returns readOnlyFlags(), so the
+    cell was never editable or checkable there anyway, and the displayed value
+    comes from the model's DisplayRole (locale-formatted to the
+    Preferences > Library BPM precision), not from the delegate.
+ .
+ Sorting by BPM needed no change: RekordboxPlaylistModel::initSortColumnMapping
+ already maps SortColumnId::Bpm, and the list still opens sorted by # because
+ forceDefaultSort() is unaffected.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+diff --git a/src/library/basetracktablemodel.cpp b/src/library/basetracktablemodel.cpp
+--- a/src/library/basetracktablemodel.cpp
++++ b/src/library/basetracktablemodel.cpp
+@@ -679,7 +679,14 @@
+             });
+     if (index == fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_RATING)) {
+         return new StarDelegate(pTableView);
+-    } else if (index == fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_BPM)) {
++    } else if (index == fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_BPM) &&
++            fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_BPM_LOCK) >= 0) {
++        // XDJ: BPMDelegate exists to draw and toggle the BPM-lock indicator,
++        // so it is only worth installing on a model that has the lock column.
++        // Without it the BPM cell renders through the view's default delegate,
++        // like Title or Duration, instead of through BPMDelegate's hidden
++        // styling widget -- which is what keeps the Rekordbox list visually
++        // uniform, since the skin styles the table but not #LibraryBPMButton.
+         return new BPMDelegate(pTableView);
+     } else if (index == fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_TIMESPLAYED)) {
+         return new CheckboxDelegate(pTableView, QStringLiteral("LibraryPlayedCheckbox"));
+@@ -1175,6 +1182,15 @@
+                     ColumnCache::COLUMN_LIBRARYTABLE_PLAYED);
+             break;
+         case ColumnCache::COLUMN_LIBRARYTABLE_BPM:
++            // XDJ: a model without a bpm_lock column has no lock state to
++            // report, and must not claim one. rawSiblingValue() returns null
++            // for the missing field, which fell through to PartiallyChecked
++            // below and drew an indeterminate lock indicator in every BPM
++            // cell -- visible as soon as a model that lacks the column (the
++            // Rekordbox views) shows BPM at all.
++            if (fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_BPM_LOCK) < 0) {
++                return QVariant();
++            }
+             boolValue = rawSiblingValue(
+                     index,
+                     ColumnCache::COLUMN_LIBRARYTABLE_BPM_LOCK);
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -1458,10 +1458,11 @@
+ }
+ 
+ bool RekordboxPlaylistModel::isColumnInternal(int column) {
+-    // XDJ: fixed appliance column set — #, Title, Artist, Key, Duration.
++    // XDJ: fixed appliance column set — #, Title, Artist, BPM, Key, Duration.
+     if (column == fieldIndex(ColumnCache::COLUMN_PLAYLISTTRACKSTABLE_POSITION) ||
+             column == fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_TITLE) ||
+             column == fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_ARTIST) ||
++            column == fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_BPM) ||
+             column == fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_KEY) ||
+             column == fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_DURATION)) {
+         return false;
+diff --git a/src/widget/wtracktableview.cpp b/src/widget/wtracktableview.cpp
+--- a/src/widget/wtracktableview.cpp
++++ b/src/widget/wtracktableview.cpp
+@@ -265,6 +265,16 @@
+         if (pTrackModel->isColumnInternal(i)) {
+             //qDebug() << "Hiding column" << i;
+             horizontalHeader()->hideSection(i);
++        } else if (pTrackModel->fixedColumnLayout()) {
++            // XDJ: for a fixed appliance layout, isColumnInternal() *is* the
++            // visible column set, so it has to win over any restored header
++            // state. WTrackTableViewHeader::restoreHeaderState() hides every
++            // section before re-showing the ones the saved state lists, so a
++            // column that was internal when the state was written stays hidden
++            // forever -- which is exactly what happens to each column added to
++            // the set by an update, on every unit that has run a previous
++            // version. Re-show it explicitly instead.
++            horizontalHeader()->showSection(i);
+         }
+         /* If Mixxx starts the first time or the header states have been cleared
+          * due to database schema evolution we gonna hide all columns that may
+@@ -371,17 +381,24 @@
+     const int posColumn = pTrackModel->fieldIndex(QStringLiteral("position"));
+     const int artistColumn = pTrackModel->fieldIndex(QStringLiteral("artist"));
+     const int titleColumn = pTrackModel->fieldIndex(QStringLiteral("title"));
++    const int bpmColumn = pTrackModel->fieldIndex(QStringLiteral("bpm"));
+     const int keyColumn = pTrackModel->fieldIndex(QStringLiteral("key"));
+     const int durationColumn = pTrackModel->fieldIndex(QStringLiteral("duration"));
+-    if (posColumn < 0 || artistColumn < 0 || titleColumn < 0 ||
++    if (posColumn < 0 || artistColumn < 0 || titleColumn < 0 || bpmColumn < 0 ||
+             keyColumn < 0 || durationColumn < 0) {
+         return;
+     }
+ 
+-    // Visual order: #, Title, Artist, Key, Duration.
++    // Visual order: #, Title, Artist, BPM, Key, Duration. BPM and Key sit
++    // together on the right, next to the two numbers a DJ reads when picking
++    // the next track.
+     QHeaderView* pHeader = horizontalHeader();
+-    const int logicalOrder[] = {
+-            posColumn, titleColumn, artistColumn, keyColumn, durationColumn};
++    const int logicalOrder[] = {posColumn,
++            titleColumn,
++            artistColumn,
++            bpmColumn,
++            keyColumn,
++            durationColumn};
+     int visualTarget = 0;
+     for (const int logical : logicalOrder) {
+         const int visual = pHeader->visualIndex(logical);
+@@ -396,12 +413,17 @@
+         return;
+     }
+     const QFontMetrics metrics(font());
+-    // Content-sized columns: # plus sort arrow, key names, m:ss durations.
++    // Content-sized columns: # plus sort arrow, BPM to one decimal, key names,
++    // m:ss durations. "188.8" is the widest BPM the list realistically shows;
++    // anything above it is rare enough to be worth eliding rather than paying
++    // for a wider column on every row.
+     const int posWidth = metrics.horizontalAdvance(QStringLiteral("9999")) + 24;
++    const int bpmWidth = metrics.horizontalAdvance(QStringLiteral("188.8")) + 20;
+     const int keyWidth = metrics.horizontalAdvance(QStringLiteral("A#m")) + 24;
+     const int durationWidth =
+             metrics.horizontalAdvance(QStringLiteral("88:88")) + 16;
+-    int remaining = viewportWidth - posWidth - keyWidth - durationWidth;
++    int remaining =
++            viewportWidth - posWidth - bpmWidth - keyWidth - durationWidth;
+     if (remaining < 120) {
+         remaining = 120;
+     }
+@@ -413,16 +435,19 @@
+     // resizeEvent(), so recomputing identical widths was pure churn.
+     if (posWidth == m_appliedPosWidth && titleWidth == m_appliedTitleWidth &&
+             artistWidth == m_appliedArtistWidth &&
++            bpmWidth == m_appliedBpmWidth &&
+             keyWidth == m_appliedKeyWidth) {
+         return;
+     }
+     m_appliedPosWidth = posWidth;
+     m_appliedTitleWidth = titleWidth;
+     m_appliedArtistWidth = artistWidth;
++    m_appliedBpmWidth = bpmWidth;
+     m_appliedKeyWidth = keyWidth;
+     setColumnWidth(posColumn, posWidth);
+     setColumnWidth(titleColumn, titleWidth);
+     setColumnWidth(artistColumn, artistWidth);
++    setColumnWidth(bpmColumn, bpmWidth);
+     setColumnWidth(keyColumn, keyWidth);
+     // durationColumn is the last visual section and stretches to fill
+     // the remaining width (setStretchLastSection in loadTrackModel).
+diff --git a/src/widget/wtracktableview.h b/src/widget/wtracktableview.h
+--- a/src/widget/wtracktableview.h
++++ b/src/widget/wtracktableview.h
+@@ -163,7 +163,7 @@
+     void initTrackMenu();
+ 
+     // XDJ: proportional column widths + visual order for models with a
+-    // fixed appliance column layout (#, Title, Artist, Key, Duration).
++    // fixed appliance column layout (#, Title, Artist, BPM, Key, Duration).
+     void applyFixedColumnWidths();
+ 
+     /// XDJ: forget the last applied column widths so the next
+@@ -172,6 +172,7 @@
+         m_appliedPosWidth = -1;
+         m_appliedTitleWidth = -1;
+         m_appliedArtistWidth = -1;
++        m_appliedBpmWidth = -1;
+         m_appliedKeyWidth = -1;
+     }
+ 
+@@ -181,6 +182,7 @@
+     int m_appliedPosWidth = -1;
+     int m_appliedTitleWidth = -1;
+     int m_appliedArtistWidth = -1;
++    int m_appliedBpmWidth = -1;
+     int m_appliedKeyWidth = -1;
+ 
+     const UserSettingsPointer m_pConfig;

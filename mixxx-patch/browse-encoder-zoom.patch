@@ -1,0 +1,190 @@
+Description: BROWSE encoder becomes the waveform zoom on the Overview tab
+ The BROWSE rotary was bound straight to [Library],MoveVertical, so it only
+ ever scrolled the list -- there was no hardware way to zoom the waveforms at
+ all, despite the stock mapping's own header advertising "Waveform zoom
+ (shift)" for a binding that does not exist anywhere in the XML.
+ .
+ The encoder now follows the screen instead of picking one job for good:
+ with the Overview tab up it zooms, and in Browse/Search it scrolls exactly as
+ before. That keeps the only hardware route through a track list -- losing it
+ on an appliance whose alternative is a touchscreen would have been a plain
+ regression -- while putting zoom on the knob at the moment the waveforms are
+ the only thing on screen.
+ .
+ One detent is one zoom step, applied to both decks from a single target
+ rather than stepping each from its own value: the skin stacks both waveforms
+ permanently and they are only readable against each other at a common scale,
+ so this also pulls them back together if they ever diverge. Clockwise zooms
+ in, which means *subtracting*, because waveform_zoom counts how much track is
+ on screen. The range is clamped to 1..10 in the script because
+ BaseTrackPlayerImpl::slotWaveformZoomValueChangeRequest ignores a request
+ outside it rather than clamping into it, so an unclamped target at either end
+ would silently do nothing.
+ .
+ The binding changes from <SelectKnob/> to <Script-Binding/>, which means the
+ script receives the raw MIDI byte: MidiController::receive() returns early on
+ the script path, before the SelectKnob decode runs. browseTurn() therefore
+ does that decode itself (7-bit two's complement, 0x01 = one detent clockwise,
+ 0x7F = one counter-clockwise) so scrolling behaves exactly as it did.
+ .
+ LibraryControl now creates [Tab],overview. The control is normally created by
+ LegacySkinParser when it parses <SingletonContainer trigger="[Tab],overview">,
+ and the parser reuses one that already exists, so this changes nothing about
+ how the skin drives it -- but the script reads the key on every detent, and
+ engine.getValue() on a control that does not exist logs a warning per call and
+ *throws* in developer mode (ControllerScriptEngineBase::logOrThrowError). The
+ key therefore has to exist even under a stock skin that never defines it;
+ there it simply stays 0 and the encoder keeps its stock scrolling behaviour.
+ Creating it in LibraryControl also gets the ordering right: CoreServices (and
+ with it Library/LibraryControl) is constructed before the skin is parsed,
+ which is in turn before ControllerManager::setUpDevices() starts any script.
+ .
+ Not changed: the encoder still zooms while the settings overlay is open,
+ because that overlay deliberately blocks touch input only and leaves the
+ hardware controls live, exactly like the jog and transport buttons.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+diff --git a/res/controllers/Pioneer-DDJ-400-script.js b/res/controllers/Pioneer-DDJ-400-script.js
+--- a/res/controllers/Pioneer-DDJ-400-script.js
++++ b/res/controllers/Pioneer-DDJ-400-script.js
+@@ -8,7 +8,8 @@
+ //
+ //  Implemented (as per manufacturer's manual):
+ //      * Mixer Section (Faders, EQ, Filter, Gain, Cue)
+-//      * Browsing and loading + Waveform zoom (shift)
++//      * Browsing and loading; the BROWSE encoder is the waveform zoom
++//        while the Overview tab is showing (Pioneered)
+ //      * Jogwheels, Scratching, Bending, Loop adjust
+ //      * Cycle Temporange
+ //      * Beat Sync
+@@ -128,6 +129,11 @@
+ // allowed to scratch. Indexed by channel (0 = deck 1, 1 = deck 2).
+ PioneerDDJ400.jogTouched = [false, false];
+ 
++// Pioneered: waveform zoom limits, mirroring WaveformWidgetRenderer's
++// s_waveformMinZoom / s_waveformMaxZoom. The BROWSE encoder steps between them.
++PioneerDDJ400.waveformZoomMin = 1;
++PioneerDDJ400.waveformZoomMax = 10;
++
+ PioneerDDJ400.tempoRanges = [0.06, 0.10, 0.16, 0.25];
+ 
+ PioneerDDJ400.shiftButtonDown = [false, false];
+@@ -253,6 +259,60 @@
+ };
+ 
+ //
++// BROWSE encoder
++//
++
++// Pioneered: the BROWSE encoder does whatever the screen is showing. With the
++// Overview tab up it is the waveform zoom; in Browse/Search it scrolls the
++// list, exactly as the stock <SelectKnob/> binding to [Library],MoveVertical
++// did. [Tab],overview is the Overview page trigger of the skin's tab stack: it
++// is 1 only while that page is current, and LibraryControl creates it so this
++// read is safe under any skin (under a stock skin it stays 0 and the encoder
++// only ever scrolls).
++PioneerDDJ400.browseTurn = function(_channel, _control, value, _status, _group) {
++    // Relative, 7-bit two's complement: 0x01 = one detent clockwise,
++    // 0x7F = one counter-clockwise. This is the decode the <SelectKnob/>
++    // option used to do in C++; a Script-Binding gets the raw byte instead.
++    const delta = value < 0x40 ? value : value - 128;
++    if (delta === 0) {
++        return;
++    }
++
++    if (engine.getValue("[Tab]", "overview") > 0) {
++        PioneerDDJ400.waveformZoom(delta);
++        return;
++    }
++
++    engine.setValue("[Library]", "MoveVertical", delta);
++};
++
++// Pioneered: zoom both waveforms by one step per detent.
++//
++// waveform_zoom is how much track is on screen, so a *smaller* number is a
++// closer view: clockwise (delta > 0) has to subtract. The skin stacks both
++// decks' waveforms permanently, and they are only readable against each other
++// at a common scale, so one turn drives both from a single target rather than
++// stepping each deck from its own value -- that also pulls them back together
++// if they ever diverge.
++//
++// The range is clamped here because BaseTrackPlayerImpl ignores a change
++// request outside it rather than clamping into it, so an unclamped target at
++// either end would simply do nothing.
++PioneerDDJ400.waveformZoom = function(delta) {
++    const current = Math.round(engine.getValue("[Channel1]", "waveform_zoom"));
++    let target = current - delta;
++    if (target < PioneerDDJ400.waveformZoomMin) {
++        target = PioneerDDJ400.waveformZoomMin;
++    } else if (target > PioneerDDJ400.waveformZoomMax) {
++        target = PioneerDDJ400.waveformZoomMax;
++    }
++
++    for (const group of ["[Channel1]", "[Channel2]"]) {
++        engine.setValue(group, "waveform_zoom", target);
++    }
++};
++
++//
+ // Channel level lights
+ //
+ 
+diff --git a/res/controllers/Pioneer-DDJ-400.midi.xml b/res/controllers/Pioneer-DDJ-400.midi.xml
+--- a/res/controllers/Pioneer-DDJ-400.midi.xml
++++ b/res/controllers/Pioneer-DDJ-400.midi.xml
+@@ -16,13 +16,13 @@
+                 BROWSER Section START
+             -->
+             <control>
+-                <description>BROWSE - rotate - Scroll tracklist/tree view</description>
++                <description>BROWSE - rotate - Waveform zoom on the Overview tab, scroll tracklist/tree view elsewhere</description>
+                 <group>[Library]</group>
+-                <key>MoveVertical</key>
++                <key>PioneerDDJ400.browseTurn</key>
+                 <status>0xB6</status>
+                 <midino>0x40</midino>
+                 <options>
+-                    <SelectKnob/>
++                    <Script-Binding/>
+                 </options>
+             </control>
+             <control>
+diff --git a/src/library/librarycontrol.cpp b/src/library/librarycontrol.cpp
+--- a/src/library/librarycontrol.cpp
++++ b/src/library/librarycontrol.cpp
+@@ -682,6 +682,19 @@
+     m_pMenuSubpage = std::make_unique<ControlPushButton>(
+             ConfigKey("[Library]", "menu_subpage"));
+     m_pMenuSubpage->setStates(2);
++    // XDJ: [Tab],overview is the Overview page trigger of the skin's tab
++    // WidgetStack, and is normally created by LegacySkinParser when it parses
++    // <SingletonContainer trigger="[Tab],overview">. Create it here instead,
++    // before any skin is parsed: the parser reuses a control that already
++    // exists, and the browse encoder's script reads this key on every detent
++    // to decide whether it is zooming the waveforms or scrolling the list.
++    // engine.getValue() on a control that does not exist logs a warning per
++    // call -- and throws in developer mode -- so the key has to exist even
++    // under a stock skin that never defines it. There it simply stays 0 and
++    // the encoder keeps its stock scrolling behaviour.
++    m_pTabOverview = std::make_unique<ControlPushButton>(
++            ConfigKey("[Tab]", "overview"));
++    m_pTabOverview->setButtonMode(ControlPushButton::TOGGLE);
+     m_pUpdateOpen = makeMenuAction("update_open", [this] { openUpdatePage(); });
+     m_pUpdateBack = makeMenuAction("update_back", [this] {
+         // An update in flight owns the screen: apt is mid-way through dpkg
+diff --git a/src/library/librarycontrol.h b/src/library/librarycontrol.h
+--- a/src/library/librarycontrol.h
++++ b/src/library/librarycontrol.h
+@@ -362,6 +362,10 @@
+     std::unique_ptr<ControlPushButton> m_pUpdateRunning;
+     std::unique_ptr<ControlPushButton> m_pUpdateDone;
+     std::unique_ptr<ControlPushButton> m_pMenuSubpage;
++    // XDJ: the skin's Overview tab trigger, owned here so it exists before the
++    // skin is parsed and under skins that never define it. See the comment at
++    // its construction in librarycontrol.cpp.
++    std::unique_ptr<ControlPushButton> m_pTabOverview;
+     bool m_rebootTriggered = false;
+ 
+     // Font sizes

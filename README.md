@@ -32,8 +32,8 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
 * **Library built for a small touch screen**
   * "Tracks visible in list" zoom preference (default 8 rows): row height *and*
     font scale to fit exactly N tracks in the list
-  * Fixed column set — **#, Title, Artist, Key, Duration** — with proportional
-    widths that always fill the screen
+  * Fixed column set — **#, Title, Artist, BPM, Key, Duration** — with
+    proportional widths that always fill the screen
   * Track lists always open sorted by # ascending
   * **LOAD returns you to the Overview tab** once the track is actually on the
     deck — a load refused because the deck is still playing leaves you in the
@@ -52,6 +52,9 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
     bar), with the grid correctly anchored on rekordbox's "1"
   * Waveform frequency bands are not affected by the EQ knobs (a closed EQ
     still shows the track's content, like on CDJs)
+  * **BROWSE knob zooms the waveforms** while the Overview tab is up (both
+    decks together, clockwise to zoom in); on Browse/Search the same knob
+    scrolls the track list as before
   * Loop-out with no loop-in starts the loop from the cue point
   * Filter effect with a Pioneer-style response curve and gentler default Q
 * **Hardware robustness**
@@ -207,7 +210,11 @@ automatically.
   stick — pause it first.
 * **Key traffic light**: green Key cells are harmonically compatible with the
   deck you started most recently. Pause everything and the lights go out.
-* **Zoom**: *Preferences → Library → Tracks visible in list*.
+* **BROWSE knob**: on the Overview tab it zooms both waveforms, one step per
+  detent, clockwise to zoom in. On Browse/Search it scrolls the list. Press
+  (and SHIFT + press) still move the focus between list and tree.
+* **Rows shown in the list**: *Preferences → Library → Tracks visible in
+  list*.
 
 ## Building the packages yourself
 

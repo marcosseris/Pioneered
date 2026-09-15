@@ -434,3 +434,45 @@
     from the touchscreen: installing the updater is root work outside what
     the sudoers rule permits, which is why the page names a shell command
     rather than offering a button.
+
+23. `browse-encoder-zoom.patch` (added 2026-09-15, r31) — the BROWSE rotary
+    becomes the waveform zoom while the Overview tab is up, and still scrolls
+    the list in Browse/Search. One detent is one zoom step applied to both
+    decks from a single target (the skin stacks both waveforms, and they only
+    read against each other at a common scale); clockwise zooms in, which
+    subtracts, because `waveform_zoom` counts how much track is on screen.
+    Clamped to 1..10 in the script because
+    `BaseTrackPlayerImpl::slotWaveformZoomValueChangeRequest` *ignores* an
+    out-of-range request rather than clamping it. The binding moves from
+    `<SelectKnob/>` to `<Script-Binding/>`, so the script now does the 7-bit
+    two's complement decode itself (`MidiController::receive()` returns before
+    the SelectKnob decode on the script path). `LibraryControl` creates
+    `[Tab],overview`: the skin parser reuses an existing control, and the
+    script reads that key on every detent — `engine.getValue()` on a missing
+    control warns per call and throws in developer mode, so it has to exist
+    even under skins that never define it (there it stays 0 and the encoder
+    only scrolls). Touches `res/controllers/Pioneer-DDJ-400.midi.xml`,
+    `res/controllers/Pioneer-DDJ-400-script.js`,
+    `src/library/librarycontrol.{h,cpp}`.
+
+24. `browse-bpm-column.patch` (added 2026-09-15, r31) — BPM joins the fixed
+    Rekordbox column set: #, Title, Artist, BPM, Key, Duration. The value was
+    already imported from the PDB and already in the track source's columns;
+    it was only ever hidden. Three fixes were needed for it to actually show
+    up and look right. (a) `WTrackTableView::setTrackModel()` re-shows every
+    non-internal column for a `fixedColumnLayout()` model —
+    `restoreHeaderState()` hides all sections and re-shows only what the saved
+    state lists, and that state (in `mixxxdb.sqlite`, so it outlives the deb)
+    records BPM as hidden from when it was internal; without this, *any*
+    column added to the set is invisible on exactly the units that already
+    have the product. (b) A model with no `bpm_lock` column no longer reports
+    a `CheckStateRole` for BPM, which was falling through to `PartiallyChecked`
+    and drawing an indeterminate lock in every cell. (c) `BPMDelegate` is only
+    installed when the model has `bpm_lock` — it exists to draw that lock, and
+    it paints through a hidden `LibraryBPMButton` the skin does not style, so
+    the cell would not have matched the rest of the list. Nothing is lost:
+    these views are read-only (`readOnlyFlags`) and the text comes from the
+    model's `DisplayRole`. Sorting by BPM already worked
+    (`initSortColumnMapping` maps `SortColumnId::Bpm`). Touches
+    `src/widget/wtracktableview.{h,cpp}`, `src/library/basetracktablemodel.cpp`,
+    `src/library/rekordbox/rekordboxfeature.cpp`.

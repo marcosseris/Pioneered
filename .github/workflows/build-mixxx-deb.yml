@@ -46,6 +46,8 @@ jobs:
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/wifi-settings.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/rekordbox-path-fallback.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/update-page.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/browse-encoder-zoom.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/browse-bpm-column.patch"
           DEBEMAIL=pioneered-build@localhost DEBFULLNAME="Pioneered CI" \
             dch --local "+usbbrowse.r${GITHUB_RUN_NUMBER}." "Pioneered USB browse/eject patch build ${GITHUB_RUN_NUMBER}"
 
