@@ -432,54 +432,14 @@ WLabel {
   qproperty-wordWrap: true;
 }
 
-#LoadDeck1, #LoadDeck2 {
-  border-radius: 4px;
-  color: white;
-  font-size: 16px;
-  font-weight: bold;
-  margin: 6px;
-}
-
-#LoadDeck1 {
-  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-      stop:0 #163a6e, stop:1 #0e2850);
-  border: 2px solid #2d85cd;
-}
-
-#LoadDeck2 {
-  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-      stop:0 #6e1628, stop:1 #500e1c);
-  border: 2px solid #d73535;
-}
-
-/* Hold-to-restart flash (value driven by [Library],load_flash_N).
-   Flat white on purpose: maximum brightness. */
-#LoadDeck1[value="1"] {
-  background-color: white;
-  border: 2px solid white;
-  color: #112f5c;
-}
-
-#LoadDeck2[value="1"] {
-  background-color: white;
-  border: 2px solid white;
-  color: #5c1120;
-}
-
-/* Scoped to [value="0"] for the same reason as the USB buttons: a bare
-   :pressed would sit on top of the hold-to-restart flash for the full 7s
-   hold and hide it. load_flash_N is 0 until the blink starts, so this is
-   just the tap acknowledgement. */
-#LoadDeck1[value="0"]:pressed {
-  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-      stop:0 #2d85cd, stop:1 #1d5f9e);
-  border: 2px solid #6fb2e8;
-}
-
-#LoadDeck2[value="0"]:pressed {
-  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-      stop:0 #d73535, stop:1 #9e2222);
-  border: 2px solid #ec7a7a;
+/* Browse/Search deck strip. The side padding replaces the inset the on-screen
+   LOAD buttons used to give this row; without it the overviews would run into
+   the edges of the screen. Padding, not margin: Qt turns a styled widget's
+   padding into contents margins the child layout respects, while margin on a
+   container in a layout does nothing - the same reason every other container
+   in this file (#DeckHeader, #TrackBPMRangeContainer) uses padding. */
+#DecksRow {
+  padding: 0 6px;
 }
 
 /************************************************************************/

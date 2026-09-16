@@ -19,8 +19,10 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
 * Fully scalable, minimum resolution 480x420; tiny resource footprint
 * Small waveform overviews at the bottom, keylock and quantize buttons
 * BeatFX section with three effect units and level meters
-* Touch-optimized Browse tab: two-pane playlist/track view, LOAD 1 / LOAD 2
-  buttons, one-tap **USB A / USB B** source buttons
+* Touch-optimized Browse tab: two-pane playlist/track view, one-tap
+  **USB A / USB B** source buttons, and full-width deck overviews along the
+  bottom (loading is the DDJ-400's own LOAD 1 / LOAD 2 buttons — no duplicate
+  on screen)
 
 ### Patched Mixxx (mixxx-patch/, prebuilt in Releases)
 * **USB workflow like a real XDJ**
@@ -53,8 +55,8 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   * Waveform frequency bands are not affected by the EQ knobs (a closed EQ
     still shows the track's content, like on CDJs)
   * **BROWSE knob zooms the waveforms** while the Overview tab is up (both
-    decks together, clockwise to zoom in); on Browse/Search the same knob
-    scrolls the track list as before
+    decks together, clockwise to zoom in, ten steps); on Browse/Search the
+    same knob scrolls the track list as before
   * Loop-out with no loop-in starts the loop from the cue point
   * Filter effect with a Pioneer-style response curve and gentler default Q
 * **Hardware robustness**
@@ -70,9 +72,8 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
 * **Reliability**
   * Hardened rekordbox database parser: corrupt/truncated `EXPORT.PDB` files
     (e.g. from pulling a stick mid-write) can no longer crash Mixxx
-  * **Hold-to-restart**: hold either on-screen LOAD button for 7 s (it blinks
-    faster and faster, like the USB eject hold) to kill and relaunch Mixxx —
-    recover a misbehaving session from the touchscreen, no keyboard needed
+  * **Restart from the touchscreen**: Cog → **RESTART MIXXX** kills and
+    relaunches Mixxx — recover a misbehaving session with no keyboard
 * **On-screen settings menu**
   * Cog button in the top-right corner opens a centered settings panel with
     **Power off**, **Restart Mixxx** and **Back** — shut the unit down cleanly

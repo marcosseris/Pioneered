@@ -18,8 +18,9 @@
        [Library],arm_power / arm_restart is 0, the red "TAP AGAIN" face while
        it is 1. Both faces press the same control - LibraryControl decides
        whether a press arms or commits, and disarms again after 5s. The
-       trigger buttons follow templates/load_button.xml: value comes from the
-       skin, not the control, and press/release emit 1/0.
+       trigger buttons are wired the same way the USB A/B buttons are:
+       ConnectValueToWidget is false so the face comes from the skin rather
+       than the control, and press/release emit 1/0.
 
        Unpatched Mixxx has none of the [Library] controls below, so the panel
        degrades to an inert BACK button rather than misbehaving.

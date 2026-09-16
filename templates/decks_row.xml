@@ -1,12 +1,17 @@
 <Template>
+  <!-- The deck strip at the bottom of Browse and Search: each deck's track
+       overview, nothing else. There are no on-screen LOAD buttons - LOAD 1
+       and LOAD 2 are physical buttons on the DDJ-400, and duplicating them
+       here cost 220px of a 480px-wide screen for a second way to press a
+       button the operator's hand is already on. The overviews take that
+       width instead, which is where it does some good: at this size the
+       overview is the only place a cue point or the played/unplayed split
+       is visible while browsing. -->
   <WidgetGroup>
-    <ObjectName>Decks</ObjectName>
+    <ObjectName>DecksRow</ObjectName>
     <Layout>horizontal</Layout>
     <Size>0me,90f</Size>
     <Children>
-      <Template src="skin:templates/load_button.xml">
-        <SetVariable name="channel">1</SetVariable>
-      </Template>
       <Template src="skin:deck.xml">
         <SetVariable name="channel">1</SetVariable>
       </Template>
@@ -17,9 +22,6 @@
         <Size>12f,0me</Size>
       </WidgetGroup>
       <Template src="skin:deck.xml">
-        <SetVariable name="channel">2</SetVariable>
-      </Template>
-      <Template src="skin:templates/load_button.xml">
         <SetVariable name="channel">2</SetVariable>
       </Template>
     </Children>

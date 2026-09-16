@@ -102,7 +102,11 @@
     would be needed for that). Touches `src/library/librarycontrol.{h,cpp}`.
     Skin side (same release): `templates/load_button.xml` (2 states + new
     connections), `style.qss` (white flash + banner style), `skin.xml`
-    (RestartingBanner overlay).
+    (RestartingBanner overlay). **Dormant since r32**: the on-screen LOAD
+    buttons were removed (they duplicated physical buttons and cost 220px of
+    a 480px browse screen), so nothing presses `restart_hold_1/2` any more.
+    The C++ side is left in place — it costs two controls and no work — and
+    the cog menu's RESTART MIXXX reaches the same `triggerRestart()`.
 12. `system-menu.patch` (added 2026-08-04) — on-screen settings menu behind a
     cog in the topbar. `LibraryControl` gains `[Library],menu_power`,
     `menu_restart`, `menu_disarm` (push, 1 on press / 0 on release) and the
@@ -435,25 +439,40 @@
     the sudoers rule permits, which is why the page names a shell command
     rather than offering a button.
 
-23. `browse-encoder-zoom.patch` (added 2026-09-15, r31) — the BROWSE rotary
-    becomes the waveform zoom while the Overview tab is up, and still scrolls
-    the list in Browse/Search. One detent is one zoom step applied to both
-    decks from a single target (the skin stacks both waveforms, and they only
-    read against each other at a common scale); clockwise zooms in, which
-    subtracts, because `waveform_zoom` counts how much track is on screen.
-    Clamped to 1..10 in the script because
+23. `browse-encoder-zoom.patch` (added 2026-09-15, r31; **rewritten r32**) —
+    the BROWSE rotary becomes the waveform zoom while the Overview tab is up,
+    and still scrolls the list in Browse/Search. One detent is one zoom step
+    applied to every deck from a single target (the skin stacks both
+    waveforms, and they only read against each other at a common scale);
+    clockwise zooms in, which subtracts, because `waveform_zoom` counts how
+    much track is on screen. Clamped to
+    `WaveformWidgetRenderer::s_waveformMinZoom..MaxZoom` because
     `BaseTrackPlayerImpl::slotWaveformZoomValueChangeRequest` *ignores* an
-    out-of-range request rather than clamping it. The binding moves from
-    `<SelectKnob/>` to `<Script-Binding/>`, so the script now does the 7-bit
-    two's complement decode itself (`MidiController::receive()` returns before
-    the SelectKnob decode on the script path). `LibraryControl` creates
-    `[Tab],overview`: the skin parser reuses an existing control, and the
-    script reads that key on every detent — `engine.getValue()` on a missing
-    control warns per call and throws in developer mode, so it has to exist
-    even under skins that never define it (there it stays 0 and the encoder
-    only scrolls). Touches `res/controllers/Pioneer-DDJ-400.midi.xml`,
-    `res/controllers/Pioneer-DDJ-400-script.js`,
-    `src/library/librarycontrol.{h,cpp}`.
+    out-of-range request rather than clamping it; the current level is rounded
+    first because `WWaveformViewer::wheelEvent` leaves fractional zooms behind.
+
+    The r31 version did this in `res/controllers` — the encoder rebound to a
+    `<Script-Binding/>`, the work in `Pioneer-DDJ-400-script.js` — and never
+    fired on hardware. A mapping of the same name in the *user* mapping
+    directory beats the one in `/usr/share/mixxx/controllers`
+    (`DlgPrefController` consults the user enumerator last and lets its match
+    win) and Mixxx writes a copy there whenever a mapping is dirty;
+    `<scriptfiles>` resolve next to that XML. One stale
+    `~/.mixxx/controllers/Pioneer-DDJ-400.midi.xml` therefore shadows both the
+    patched mapping and the patched script, and no deb can fix that because no
+    deb owns that directory. **Anything in `res/controllers` is unreliable on
+    a unit that has ever had a user mapping — put behaviour in C++.**
+
+    r32 decides it in `LibraryControl::slotMoveVertical`, the destination of
+    the *stock* binding, so the mapping is left alone and any input reaching
+    `[Library],MoveVertical` zooms on the Overview tab — including the Up/Down
+    keys via `slotMoveUp()`/`slotMoveDown()`. `LibraryControl` creates
+    `[Tab],overview`: the skin parser reuses an existing control, and
+    `slotMoveVertical` reads that key on every detent — `ControlObject::get()`
+    on a missing control asserts in a debug build — so it has to exist even
+    under skins that never define it (there it stays 0 and the encoder only
+    scrolls); owning it here also keeps it alive across a skin reload. Touches
+    `src/library/librarycontrol.{h,cpp}` only.
 
 24. `browse-bpm-column.patch` (added 2026-09-15, r31) — BPM joins the fixed
     Rekordbox column set: #, Title, Artist, BPM, Key, Duration. The value was
