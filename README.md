@@ -68,7 +68,9 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
     wheel is always a pitch bend and can never scratch the track, and the
     nudge follows your hand instead of lagging half a second behind it (the
     smoothing window is a fixed slice of time now, not a fixed number of audio
-    buffers, so the feel no longer depends on the audio latency setting)
+    buffers, so the feel no longer depends on the audio latency setting). How
+    hard it pushes is yours to set, from the touchscreen — Cog → **JOG
+    SENSITIVITY** — and the setting survives a reboot
 * **Reliability**
   * Hardened rekordbox database parser: corrupt/truncated `EXPORT.PDB` files
     (e.g. from pulling a stick mid-write) can no longer crash Mixxx
@@ -96,6 +98,13 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
     while it runs the buttons withdraw (apt is mid-way through dpkg) and the
     log scrolls, dragged with a finger. When it finishes, **RESTART NOW**
     appears. Closing the page leaves a running update running
+  * **JOG SENSITIVITY** opens a page with one setting: how far a nudge of
+    the jog side ring bends the pitch, from 20% to 200% of the built-in feel
+    in 10-point steps. Every step applies to the decks straight away, so you
+    tune it with a hand on the wheel; **SAVE** writes it to `mixxx.cfg` and
+    flushes it there and then, so it survives a reboot — and a power cut. The
+    button reads SAVE while there is something to write and SAVED once there
+    is not
   * **WI-FI** opens a full-screen page: connection status with IP address,
     the networks in range (strongest first, tagged CONNECTED / SAVED / OPEN /
     ENTERPRISE), RESCAN and PREV/NEXT paging. Tap a network to join it —

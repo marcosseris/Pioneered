@@ -648,6 +648,7 @@ WBeatSpinBox::up-button {
 
 #SettingsPanel #SettingsWifi,
 #SettingsPanel #SettingsUpdate,
+#SettingsPanel #SettingsJog,
 #SettingsPanel #SettingsPowerOff,
 #SettingsPanel #SettingsRestart,
 #SettingsPanel #SettingsBack {
@@ -674,6 +675,7 @@ WBeatSpinBox::up-button {
    like another arming step. */
 #SettingsPanel #SettingsWifi:pressed,
 #SettingsPanel #SettingsUpdate:pressed,
+#SettingsPanel #SettingsJog:pressed,
 #SettingsPanel #SettingsPowerOff:pressed,
 #SettingsPanel #SettingsRestart:pressed,
 #SettingsPanel #SettingsBack:pressed {
@@ -922,6 +924,83 @@ QPushButton#WifiRow[rowstate="armed"] {
   color: #5a5a66;
   font-size: 15px;
   font-weight: normal;
+}
+
+/************************************************************************/
+/*     Jog sensitivity page (settings menu > JOG SENSITIVITY)           */
+/************************************************************************/
+
+/* A centred panel rather than a full screen, so it wears the settings
+   panel's own frame; the backdrop is the four #SettingsScrimArea buttons,
+   already cleared of every face further up. */
+#JogPanel {
+  background-color: #32323c;
+  border: 2px solid #c3d541;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+#JogHint {
+  color: #8f8f99;
+  font-size: 13px;
+  font-weight: bold;
+  qproperty-alignment: AlignCenter;
+  qproperty-wordWrap: true;
+  padding: 0 14px;
+}
+
+/* The number is the point of the page, so it gets the room and the weight;
+   the two steppers are square-ish targets either side of it. */
+#JogValue {
+  color: #c3d541;
+  font-size: 44px;
+  font-weight: bold;
+  qproperty-alignment: AlignCenter;
+}
+
+#JogLess, #JogMore {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #16161a, stop:1 black);
+  border: 2px solid #4a4a52;
+  border-radius: 4px;
+  color: white;
+  font-size: 34px;
+  font-weight: bold;
+  margin: 8px 10px;
+}
+
+#JogSave, #JogSaved, #JogBack {
+  border-radius: 4px;
+  font-size: 18px;
+  font-weight: bold;
+  margin: 6px 10px;
+}
+
+#JogSave, #JogBack {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #16161a, stop:1 black);
+  border: 2px solid #4a4a52;
+  color: white;
+}
+
+/* SAVE is the one thing on the page that changes anything on disk, so it
+   wears the accent while there is something to write. */
+#JogSave {
+  border: 2px solid #c3d541;
+  color: #c3d541;
+}
+
+/* Nothing left to save: a flat, obviously inert face. It presses nothing. */
+#JogSaved {
+  background-color: #26262e;
+  border: 2px solid #3a3a42;
+  color: #6f6f79;
+}
+
+#JogLess:pressed, #JogMore:pressed, #JogSave:pressed, #JogBack:pressed {
+  background-color: #1f1f26;
+  border: 2px solid #6a6a76;
+  color: white;
 }
 
 /************************************************************************/

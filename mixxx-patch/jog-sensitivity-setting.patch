@@ -1,0 +1,350 @@
+Description: JOG SENSITIVITY setting in the on-screen settings menu
+ How hard a nudge of the jog side ring pushes the track is a matter of
+ taste and of the wheel in front of you, and until now it was a constant
+ compiled into the build: the DDJ-400 mapping's bendScale, which cannot be
+ reached from the touchscreen at all.
+ .
+ This adds it to the settings menu as its own page. MINUS and PLUS step the
+ sensitivity in 10-point increments between 20% and 200% of the built-in
+ feel, and each step takes effect on the decks immediately -- a feel setting
+ is only ever judged by putting a hand on the wheel, so the page would be
+ useless if it needed a commit before it could be tried.
+ .
+ SAVE is what makes the value outlast the session. It writes mixxx.cfg and
+ flushes it to disk there and then, rather than leaving it to the save Mixxx
+ does on a clean exit: POWER OFF is two rows up in this same menu and cuts
+ the power from under the process, so a setting that only survived a tidy
+ shutdown would not survive the way this unit is actually turned off. The
+ button shows SAVE while the value differs from the one on disk and an inert
+ SAVED once they match, so there is never any doubt about what a reboot will
+ bring back. Leaving the page without saving keeps the new feel for the rest
+ of the session and offers SAVE again when the page is reopened.
+ .
+ The value lives in RateControl, next to the nudge calculation that consumes
+ it, as a single setting shared by every deck (the shape the rate-ramp
+ settings already use). Applying it there rather than in the controller
+ mapping means it holds for any controller, any mapping and the keyboard,
+ and cannot be shadowed by a stale copy of the DDJ-400 script in the user's
+ own controller directory. Every RateControl loads it from mixxx.cfg in its
+ constructor, so the saved feel is in force from the first audio buffer,
+ before the skin or the library exist.
+ .
+ Only the playing deck's nudge is scaled. The same jog factor scrubs a
+ paused deck, and cueing should not get faster or slower because the
+ beatmatch nudge was tuned.
+ .
+ Skin side (jog.xml, settings.xml, style.qss in the Pioneered theme): the
+ page is a centred panel fenced in by the settings menu's own scrim, and it
+ is raised and cleared through the same menu_subpage mechanism as the Wi-Fi
+ and software update pages.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+diff --git a/src/engine/controls/ratecontrol.h b/src/engine/controls/ratecontrol.h
+--- a/src/engine/controls/ratecontrol.h
++++ b/src/engine/controls/ratecontrol.h
+@@ -70,6 +70,22 @@
+   // Set Rate Ramp Sensitivity
+   static void setRateRampSensitivity(int);
+   static int getRateRampSensitivity();
++
++  // Pioneered: jog nudge sensitivity -- how far one detent of the jog side
++  // ring bends the pitch of a playing deck, as a percentage of the built-in
++  // feel. It is a single setting shared by every deck (like the rate-ramp
++  // settings above), it is edited from the on-screen settings menu, and it
++  // is stored in mixxx.cfg under the key named below, which is read back in
++  // the constructor so the saved feel is in force from the first buffer.
++  static constexpr const char* kJogNudgeSensitivityGroup = "[Pioneered]";
++  static constexpr const char* kJogNudgeSensitivityItem = "JogNudgeSensitivity";
++  static constexpr int kJogNudgeSensitivityMinPercent = 20;
++  static constexpr int kJogNudgeSensitivityMaxPercent = 200;
++  static constexpr int kJogNudgeSensitivityStepPercent = 10;
++  static constexpr int kJogNudgeSensitivityDefaultPercent = 100;
++  // Clamps into [min, max]; read the value back to see what was applied.
++  static void setJogNudgeSensitivityPercent(int percent);
++  static int jogNudgeSensitivityPercent();
+   bool isReverseButtonPressed();
+   // ReadAheadManager::getNextSamples() notifies us each time the play position
+   // wrapped around during one buffer process (beatloop or track repeat) so
+@@ -95,6 +111,9 @@
+   // buffer duration, so the nudge response does not depend on the audio
+   // latency setting.
+   void updateJogFilter(int iSamplesPerBuffer);
++  // Pioneered: the JOG SENSITIVITY setting as a plain multiplier on the
++  // nudge. Engine-thread side of setJogNudgeSensitivityPercent().
++  static double jogNudgeSensitivityMultiplier();
+   double getJogFactor() const;
+   double getWheelFactor() const;
+   SyncMode getSyncMode() const;
+@@ -116,6 +135,13 @@
+   static ControlValueAtomic<double> m_dPermanentRateChangeCoarse;
+   static ControlValueAtomic<double> m_dPermanentRateChangeFine;
+ 
++  // Pioneered: jog nudge sensitivity in percent, written from the GUI thread
++  // by setJogNudgeSensitivityPercent() and read in the engine callback. Zero
++  // until the first RateControl is constructed, which the readers treat as
++  // "not loaded yet" and substitute the default for -- 0 is outside the
++  // settable range, so it can never be a real value.
++  static ControlValueAtomic<int> m_jogNudgeSensitivityPercent;
++
+   ControlPushButton* m_pButtonRateTempDown;
+   ControlPushButton* m_pButtonRateTempDownSmall;
+   ControlPushButton* m_pButtonRateTempUp;
+diff --git a/src/engine/controls/ratecontrol.cpp b/src/engine/controls/ratecontrol.cpp
+--- a/src/engine/controls/ratecontrol.cpp
++++ b/src/engine/controls/ratecontrol.cpp
+@@ -52,6 +52,7 @@
+ ControlValueAtomic<double> RateControl::m_dPermanentRateChangeCoarse;
+ ControlValueAtomic<double> RateControl::m_dPermanentRateChangeFine;
+ int RateControl::m_iRateRampSensitivity;
++ControlValueAtomic<int> RateControl::m_jogNudgeSensitivityPercent;
+ RateControl::RampMode RateControl::m_eRateRampMode;
+ 
+ const double RateControl::kWheelMultiplier = 40.0;
+@@ -200,6 +201,17 @@
+     m_jogFilterSamplesPerBuffer = 0;
+     m_jogSensitivityScale = 1.0;
+ 
++    // Pioneered: load the saved JOG SENSITIVITY setting. It is one value for
++    // all decks, so every RateControl loads the same number -- harmless, and
++    // it means the setting is in force from the first buffer without anything
++    // else having been constructed yet. The settings menu writes it back
++    // through setJogNudgeSensitivityPercent() while Mixxx runs.
++    if (pConfig) {
++        setJogNudgeSensitivityPercent(pConfig->getValue<int>(
++                ConfigKey(kJogNudgeSensitivityGroup, kJogNudgeSensitivityItem),
++                kJogNudgeSensitivityDefaultPercent));
++    }
++
+ //     // Update Internal Settings
+ //     // Set Pitchbend Mode
+ //     m_eRateRampMode = static_cast<RampMode>(
+@@ -401,6 +413,28 @@
+     return m_pWheel->get();
+ }
+ 
++// Pioneered: JOG SENSITIVITY, the on-screen setting for how far one detent of
++// the jog side ring bends the pitch of a playing deck. The mapping's bendScale
++// sets the built-in feel (100%); this is the operator's multiplier on top of
++// it, applied in the engine so it holds for any controller and any mapping,
++// and for the keyboard, rather than only for the copy of the DDJ-400 script
++// this build happens to ship.
++void RateControl::setJogNudgeSensitivityPercent(int percent) {
++    m_jogNudgeSensitivityPercent.setValue(math_clamp(percent,
++            kJogNudgeSensitivityMinPercent,
++            kJogNudgeSensitivityMaxPercent));
++}
++
++int RateControl::jogNudgeSensitivityPercent() {
++    const int percent = m_jogNudgeSensitivityPercent.getValue();
++    // Zero-initialised static: nothing has loaded the setting yet.
++    return percent > 0 ? percent : kJogNudgeSensitivityDefaultPercent;
++}
++
++double RateControl::jogNudgeSensitivityMultiplier() {
++    return jogNudgeSensitivityPercent() / 100.0;
++}
++
+ void RateControl::updateJogFilter(int iSamplesPerBuffer) {
+     // Pioneered: keep the jog smoothing window a fixed length of time and the
+     // nudge displacement independent of the audio buffer size. Only recompute
+@@ -525,7 +559,12 @@
+                     rate = math_max(speed + getTempRate(), 0.0);
+                     rate += wheelFactor;
+                 }
+-                rate += jogFactor;
++                // Pioneered: JOG SENSITIVITY scales the nudge. Only here,
++                // on the playing path: on a paused deck the same jogFactor
++                // scrubs through the track (above), and cueing should not
++                // speed up or slow down because the beatmatch nudge was
++                // tuned.
++                rate += jogFactor * jogNudgeSensitivityMultiplier();
+             }
+         }
+ 
+diff --git a/src/library/library.h b/src/library/library.h
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -104,6 +104,14 @@
+         return m_pSidebarModel.get();
+     }
+ 
++    // Pioneered settings menu: LibraryControl writes the settings it owns
++    // (currently JOG SENSITIVITY) straight into mixxx.cfg and flushes it,
++    // rather than waiting for the save Mixxx does on a clean exit -- POWER
++    // OFF in that same menu does not give it one.
++    const UserSettingsPointer& config() const {
++        return m_pConfig;
++    }
++
+     //static Library* buildDefaultLibrary();
+ 
+     static const int kDefaultRowHeightPx;
+diff --git a/src/library/librarycontrol.h b/src/library/librarycontrol.h
+--- a/src/library/librarycontrol.h
++++ b/src/library/librarycontrol.h
+@@ -182,6 +182,17 @@
+     void disarmSystemMenu();
+     void triggerPowerOff();
+ 
++    // Pioneered JOG SENSITIVITY page (a sub-page of the settings menu, the
++    // same shape as the Wi-Fi and update pages). The minus/plus buttons step
++    // the nudge sensitivity and apply it to the decks immediately, so it can
++    // be tried on the wheel before it is kept; SAVE writes it to mixxx.cfg
++    // and flushes, which is what makes it survive a reboot.
++    void openJogPage();
++    void closeJogPage();
++    void stepJogSensitivity(int deltaPercent);
++    void applyJogSensitivity(int percent);
++    void saveJogSensitivity();
++
+     // On-screen-keyboard search input helpers (drive the bound searchbox).
+     void appendToSearch(const QString& text);
+     void backspaceSearch();
+@@ -366,6 +377,19 @@
+     std::unique_ptr<ControlPushButton> m_pUpdateRunning;
+     std::unique_ptr<ControlPushButton> m_pUpdateDone;
+     std::unique_ptr<ControlPushButton> m_pMenuSubpage;
++
++    // JOG SENSITIVITY page state (see openJogPage above). jog_value is the
++    // percentage on screen and jog_dirty is 1 while it differs from what is
++    // in mixxx.cfg, which is what swaps the button between SAVE and SAVED.
++    std::unique_ptr<ControlPushButton> m_pJogOpen;
++    std::unique_ptr<ControlPushButton> m_pJogBack;
++    std::unique_ptr<ControlPushButton> m_pJogLess;
++    std::unique_ptr<ControlPushButton> m_pJogMore;
++    std::unique_ptr<ControlPushButton> m_pJogSave;
++    std::unique_ptr<ControlPushButton> m_pJogPage;
++    std::unique_ptr<ControlPushButton> m_pJogDirty;
++    std::unique_ptr<ControlObject> m_pJogValue;
++    int m_jogSavedPercent = 0;
+     // XDJ: the skin's Overview tab trigger, owned here so it exists before the
+     // skin is parsed, under skins that never define it, and across a skin
+     // reload. See the comment at its construction in librarycontrol.cpp.
+diff --git a/src/library/librarycontrol.cpp b/src/library/librarycontrol.cpp
+--- a/src/library/librarycontrol.cpp
++++ b/src/library/librarycontrol.cpp
+@@ -13,6 +13,7 @@
+ #include "control/controlencoder.h"
+ #include "control/controlobject.h"
+ #include "control/controlpushbutton.h"
++#include "engine/controls/ratecontrol.h"
+ #include "library/library.h"
+ #include "library/libraryview.h"
+ #include "library/sidebarmodel.h"
+@@ -717,6 +718,33 @@
+                 slotUpdateRun(value);
+             });
+ 
++    // Pioneered JOG SENSITIVITY page. Same shape again: the skin presses
++    // jog_open / jog_back / jog_less / jog_more / jog_save, and reads
++    // jog_page, jog_value and jog_dirty back. The value itself lives in
++    // RateControl, which is where the nudge is calculated and which has
++    // already loaded the saved setting from mixxx.cfg by the time the
++    // library is built -- so the page always opens on the feel the wheels
++    // actually have.
++    m_pJogPage = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "jog_page"));
++    m_pJogPage->setStates(2);
++    m_pJogDirty = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "jog_dirty"));
++    m_pJogDirty->setStates(2);
++    m_pJogValue = std::make_unique<ControlObject>(
++            ConfigKey("[Library]", "jog_value"));
++    m_jogSavedPercent = RateControl::jogNudgeSensitivityPercent();
++    m_pJogValue->set(m_jogSavedPercent);
++    m_pJogOpen = makeMenuAction("jog_open", [this] { openJogPage(); });
++    m_pJogBack = makeMenuAction("jog_back", [this] { closeJogPage(); });
++    m_pJogLess = makeMenuAction("jog_less", [this] {
++        stepJogSensitivity(-RateControl::kJogNudgeSensitivityStepPercent);
++    });
++    m_pJogMore = makeMenuAction("jog_more", [this] {
++        stepJogSensitivity(RateControl::kJogNudgeSensitivityStepPercent);
++    });
++    m_pJogSave = makeMenuAction("jog_save", [this] { saveJogSensitivity(); });
++
+     // Show the track context menu for selected tracks, or hide it
+     // if it is the current active window
+     // The control is updated in slotUpdateTrackMenuControl with the actual state
+@@ -1008,8 +1036,72 @@
+     updateSubpageControl();
+ }
+ 
++void LibraryControl::openJogPage() {
++    m_disarmTimer.stop();
++    m_pArmPower->setAndConfirm(0.0);
++    m_pArmRestart->setAndConfirm(0.0);
++    // Open on what the decks are using rather than on what was saved: a value
++    // tried out and left unsaved is still the feel of the wheel, and the page
++    // would be lying if it showed anything else. applyJogSensitivity() also
++    // recomputes jog_dirty, so SAVE is offered again in exactly that case.
++    applyJogSensitivity(RateControl::jogNudgeSensitivityPercent());
++    m_pJogPage->setAndConfirm(1.0);
++    updateSubpageControl();
++}
++
++void LibraryControl::closeJogPage() {
++    // Leaving the page keeps the value the decks are playing with; only SAVE
++    // makes it outlast the session, and an unsaved change is still on screen
++    // when the page is reopened.
++    m_pJogPage->setAndConfirm(0.0);
++    updateSubpageControl();
++}
++
++void LibraryControl::stepJogSensitivity(int deltaPercent) {
++    applyJogSensitivity(
++            RateControl::jogNudgeSensitivityPercent() + deltaPercent);
++}
++
++void LibraryControl::applyJogSensitivity(int percent) {
++    RateControl::setJogNudgeSensitivityPercent(percent);
++    // Read back rather than trusting the argument: RateControl clamps to its
++    // own range, and at either end the display would otherwise drift past the
++    // value the decks are really using.
++    const int applied = RateControl::jogNudgeSensitivityPercent();
++    m_pJogValue->set(applied);
++    m_pJogDirty->setAndConfirm(applied == m_jogSavedPercent ? 0.0 : 1.0);
++}
++
++void LibraryControl::saveJogSensitivity() {
++    const int percent = RateControl::jogNudgeSensitivityPercent();
++    if (percent == m_jogSavedPercent) {
++        return; // already what is on disk; the button reads SAVED
++    }
++    if (!m_pLibrary) {
++        return;
++    }
++    const UserSettingsPointer& pConfig = m_pLibrary->config();
++    if (!pConfig) {
++        return;
++    }
++    pConfig->setValue(ConfigKey(RateControl::kJogNudgeSensitivityGroup,
++                              RateControl::kJogNudgeSensitivityItem),
++            percent);
++    // Flush now instead of leaving it to the save on a clean exit: POWER OFF
++    // is two rows up in this same menu and cuts the power from under Mixxx,
++    // and a SAVE that only survives a tidy shutdown is not a save.
++    if (!pConfig->save()) {
++        qWarning() << "Settings menu: could not write the jog sensitivity to"
++                   << pConfig->getSettingsPath();
++        return;
++    }
++    m_jogSavedPercent = percent;
++    m_pJogDirty->setAndConfirm(0.0);
++}
++
+ void LibraryControl::updateSubpageControl() {
+-    const bool anyOpen = m_pWifiPage->get() > 0.0 || m_pUpdatePage->get() > 0.0;
++    const bool anyOpen = m_pWifiPage->get() > 0.0 ||
++            m_pUpdatePage->get() > 0.0 || m_pJogPage->get() > 0.0;
+     m_pMenuSubpage->setAndConfirm(anyOpen ? 1.0 : 0.0);
+ }
+ 
+@@ -1909,6 +2001,7 @@
+     // update in flight keeps the page, though -- it must be watched to the
+     // end, and closing it would strand the operator with no way back to it.
+     closeWifiPage();
++    closeJogPage();
+     if (!(m_pUpdatePanel && m_pUpdatePanel->isRunning())) {
+         closeUpdatePage();
+     }

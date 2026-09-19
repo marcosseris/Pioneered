@@ -3,15 +3,17 @@
        is 1. Opening it does not touch playback: this is a skin overlay, so a
        set keeps running underneath it.
 
-       Three layers share the overlay, only one visible at a time: the menu
-       itself (SettingsMenuLayer, below), the Wi-Fi page (wifi.xml) and the
-       software update page (update.xml). WI-FI and UPDATE press wifi_open /
-       update_open to raise their page; BACK on the page, the cog and the
-       scrim (via menu_disarm) clear it, so the menu always reopens on this
-       screen. The menu hides itself on [Library],menu_subpage, which is 1
-       while either page is up: a skin Connection drives a property from one
-       control only, so "hidden while Wi-Fi OR update is open" has to be a
-       control of its own rather than two competing bindings.
+       Four layers share the overlay, only one visible at a time: the menu
+       itself (SettingsMenuLayer, below), the Wi-Fi page (wifi.xml), the
+       software update page (update.xml) and the jog sensitivity page
+       (jog.xml). WI-FI, SOFTWARE UPDATE and JOG SENSITIVITY press
+       wifi_open / update_open / jog_open to raise their page; BACK on the
+       page, the cog and the scrim (via menu_disarm) clear it, so the menu
+       always reopens on this screen. The menu hides itself on
+       [Library],menu_subpage, which is 1 while any of them is up: a skin
+       Connection drives a property from one control only, so "hidden while
+       a sub-page is open" has to be a control of its own rather than
+       several competing bindings.
 
        POWER OFF and RESTART are tap-again-to-confirm. Each is two buttons
        sharing a row, only one visible at a time: the safe face while
@@ -71,7 +73,7 @@
                   <WidgetGroup>
                     <ObjectName>SettingsRow</ObjectName>
                     <Layout>vertical</Layout>
-                    <Size>0me,64f</Size>
+                    <Size>0me,56f</Size>
                     <Children>
                       <PushButton>
                         <ObjectName>SettingsWifi</ObjectName>
@@ -94,7 +96,7 @@
                   <WidgetGroup>
                     <ObjectName>SettingsRow</ObjectName>
                     <Layout>vertical</Layout>
-                    <Size>0me,64f</Size>
+                    <Size>0me,56f</Size>
                     <Children>
                       <PushButton>
                         <ObjectName>SettingsUpdate</ObjectName>
@@ -112,10 +114,33 @@
                     </Children>
                   </WidgetGroup>
 
+                  <!-- JOG SENSITIVITY never asks either: the page it opens
+                       only changes a number, and its own SAVE is the commit. -->
                   <WidgetGroup>
                     <ObjectName>SettingsRow</ObjectName>
                     <Layout>vertical</Layout>
-                    <Size>0me,64f</Size>
+                    <Size>0me,56f</Size>
+                    <Children>
+                      <PushButton>
+                        <ObjectName>SettingsJog</ObjectName>
+                        <SizePolicy>me,me</SizePolicy>
+                        <NumberStates>2</NumberStates>
+                        <State><Number>0</Number><Text>JOG SENSITIVITY</Text></State>
+                        <State><Number>1</Number><Text>JOG SENSITIVITY</Text></State>
+                        <Connection>
+                          <ConfigKey persist="false">[Library],jog_open</ConfigKey>
+                          <ConnectValueToWidget>false</ConnectValueToWidget>
+                          <EmitOnPressAndRelease>true</EmitOnPressAndRelease>
+                          <ButtonState>LeftButton</ButtonState>
+                        </Connection>
+                      </PushButton>
+                    </Children>
+                  </WidgetGroup>
+
+                  <WidgetGroup>
+                    <ObjectName>SettingsRow</ObjectName>
+                    <Layout>vertical</Layout>
+                    <Size>0me,56f</Size>
                     <Children>
                       <PushButton>
                         <ObjectName>SettingsPowerOff</ObjectName>
@@ -158,7 +183,7 @@
                   <WidgetGroup>
                     <ObjectName>SettingsRow</ObjectName>
                     <Layout>vertical</Layout>
-                    <Size>0me,64f</Size>
+                    <Size>0me,56f</Size>
                     <Children>
                       <PushButton>
                         <ObjectName>SettingsRestart</ObjectName>
@@ -201,7 +226,7 @@
                   <WidgetGroup>
                     <ObjectName>SettingsRow</ObjectName>
                     <Layout>vertical</Layout>
-                    <Size>0me,64f</Size>
+                    <Size>0me,56f</Size>
                     <Children>
                       <PushButton>
                         <ObjectName>SettingsBack</ObjectName>
@@ -248,4 +273,5 @@
 
   <Template src="skin:wifi.xml"/>
   <Template src="skin:update.xml"/>
+  <Template src="skin:jog.xml"/>
 </Template>

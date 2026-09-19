@@ -495,3 +495,27 @@
     (`initSortColumnMapping` maps `SortColumnId::Bpm`). Touches
     `src/widget/wtracktableview.{h,cpp}`, `src/library/basetracktablemodel.cpp`,
     `src/library/rekordbox/rekordboxfeature.cpp`.
+25. `jog-sensitivity-setting.patch` (added 2026-09-19, r33) — JOG SENSITIVITY
+    page in the settings menu: how far one detent of the jog side ring bends
+    the pitch of a playing deck, 20%-200% of the built-in feel in 10-point
+    steps, stepped with MINUS/PLUS and applied to the decks on every step so
+    it can be tried on the wheel. SAVE writes `[Pioneered] JogNudgeSensitivity`
+    to `mixxx.cfg` **and flushes the file immediately** — POWER OFF two rows
+    up in the same menu never gives Mixxx a clean exit to save on, so the save
+    Mixxx normally does at shutdown would be no save at all here. The button
+    reads SAVE while the value differs from what is on disk and an inert SAVED
+    once they match (`[Library],jog_dirty`). The value itself is a shared
+    static in `RateControl` (the shape the rate-ramp settings already use),
+    loaded from `mixxx.cfg` in its constructor so the saved feel is in force
+    from the first audio buffer, and applied in the engine rather than in the
+    mapping's `bendScale` so it holds for any controller, any mapping and the
+    keyboard. Only the playing deck's nudge is scaled: the same jog factor
+    scrubs a paused deck, and cueing should not change speed because the
+    beatmatch nudge was tuned. New controls `[Library],jog_open` / `jog_back` /
+    `jog_less` / `jog_more` / `jog_save` / `jog_page` / `jog_dirty` /
+    `jog_value`, raised and cleared through the existing `menu_subpage`
+    mechanism. Touches `src/engine/controls/ratecontrol.{h,cpp}`,
+    `src/library/librarycontrol.{h,cpp}`, `src/library/library.h` (a `config()`
+    accessor so LibraryControl can write and flush `mixxx.cfg`). Skin side:
+    new `jog.xml`, plus `settings.xml` (the new row; the menu's rows shrink
+    64f → 56f so six fit the same panel) and `style.qss`.
