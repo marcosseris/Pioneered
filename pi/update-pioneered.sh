@@ -14,7 +14,10 @@
 # there is no terminal there to press Ctrl-C in.
 set -euo pipefail
 
-REPO="ogg755/Pioneered"
+# The repository was renamed from ogg755/Pioneered; GitHub still redirects the
+# old name, but a redirect only lasts until someone else claims it, and every
+# release this script installs comes through here.
+REPO="marcosseris/Pioneered"
 
 # Root is needed for apt; the skin belongs to the login user.
 if [[ $EUID -ne 0 ]]; then

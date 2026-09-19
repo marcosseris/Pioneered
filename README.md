@@ -128,7 +128,7 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
 
 Download `mixxx_*.deb`, `mixxx-data_*.deb` (and optionally `mixxx-dbgsym_*.deb`
 for crash diagnostics) from the
-[**Releases page**](https://github.com/ogg755/Pioneered/releases), copy them to
+[**Releases page**](https://github.com/marcosseris/Pioneered/releases), copy them to
 the Pi, then:
 
 ```bash
@@ -141,7 +141,7 @@ dpkg -s mixxx | grep Version          # should show a +usbbrowse.rNN suffix
 ### 2. Skin
 
 ```bash
-git clone https://github.com/ogg755/Pioneered.git
+git clone https://github.com/marcosseris/Pioneered.git
 cp -r Pioneered ~/.mixxx/skins/
 ```
 
