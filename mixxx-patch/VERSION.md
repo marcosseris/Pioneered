@@ -519,3 +519,61 @@
     accessor so LibraryControl can write and flush `mixxx.cfg`). Skin side:
     new `jog.xml`, plus `settings.xml` (the new row; the menu's rows shrink
     64f → 56f so six fit the same panel) and `style.qss`.
+
+26. `bpm-readout.patch` (added 2026-09-20, r34) — the deck's BPM number sits
+    still, reads to one decimal place, and is the deck's exact tempo rather
+    than a rounding of it.
+    * **Why it moved.** Rekordbox writes every beat's time rounded to a whole
+      millisecond (44 frames at 44.1 kHz), and `Beats::fromBeatPositions()`
+      keeps two consecutive beats in one tempo section only while their
+      lengths agree to within *one frame*. So a perfectly steady track
+      arrived as a variable-tempo grid carrying a tempo marker at nearly
+      every beat, and `BpmControl::updateLocalBpm()`, which measures
+      `local_bpm` over an eight-beat window (`kLocalBpmSpan` = 4), walked a
+      few hundredths of a BPM up and down with the rounding as the track
+      played. `[ChannelN],bpm` is `local_bpm * rate_ratio`, so the readout
+      inherited the wobble. The fix is at the import: each beat also carries
+      **the tempo at that beat, as BPM x 100**, and when that value never
+      changes the track really is steady, so the grid is rebuilt with
+      `Beats::fromConstTempo()` from that exact number. The anchor is the
+      mean of the rounded beat positions measured against the fitted grid
+      — the per-beat ±0.5 ms averages out instead of the whole grid hanging
+      off whichever millisecond the first downbeat landed in — and it is
+      still the first downbeat, so the red bar markers count from the same
+      place. Positions that had to be clamped (`time < 1`) are left out of
+      the fit, and a grid whose tempo does vary, or whose fitted anchor lands
+      before the start of the file, keeps the old per-beat path. Bonus: with
+      no markers, `getBpmAroundPosition()` and `getBpmInRange()` both return
+      the stored tempo exactly, so `local_bpm`, `file_bpm` and the library's
+      BPM column agree to the digit.
+    * **One decimal, in whole 0.1 steps.** `DeckVisuals::process()` publishes
+      `visual_bpm` rounded to `mixxx::kBpmDisplayStep` (0.1, new in
+      `track/bpm.h`) with 0.075 of hysteresis, so the two cases the tempo
+      snap below deliberately does not touch — a synced deck, and a track
+      whose grid really does drift — cannot flicker the readout between two
+      numbers. One whole step of the pitch fader always clears the
+      hysteresis, so the number still follows the fader immediately.
+    * **The tempo is held on the same grid.** Rounding only the display would
+      leave two decks showing 140.1 while one ran at 140.14 and the other at
+      140.06, which is the reading that matters most. `BpmControl::
+      snapRateRatioToBpmStep()` returns the nearest rate ratio at which
+      `local_bpm * rate_ratio` is a whole 0.1, and two paths use it:
+      `RateControl::slotRateSliderChanged()` (the pitch fader, and the
+      permanent rate keys, which call that slot themselves), and a
+      `m_reSnapRatePending` flag raised in `BpmControl::trackBeatsUpdated()`
+      and consumed by `updateLocalBpm()` once the new track's local BPM is
+      known — without it a new track would inherit whatever rate the previous
+      one left behind and sit off the grid until the fader was touched. Sync
+      is deliberately left alone: it writes `rate_ratio` directly rather than
+      through the slider, the re-snap skips a synced deck, and the leader it
+      follows is on the grid already, so the follower's snap would be a
+      no-op anyway. Setting our own `m_pRateRatio` proxy does not call our
+      own slot back, so the re-snap calls `slotUpdateEngineBpm()` by hand.
+      The DDJ-400 fader is 14-bit (`(MSB << 7) + LSB`, ~16000 positions
+      across the range), so at 140 BPM and ±8% one step is about 0.45% of
+      the fader's travel — far finer than it can be placed by hand.
+    Touches `src/library/rekordbox/rekordboxfeature.cpp`, `src/track/bpm.h`,
+    `src/engine/controls/bpmcontrol.{h,cpp}`,
+    `src/engine/controls/ratecontrol.cpp`,
+    `src/waveform/visualsmanager.{h,cpp}`. Skin side: `deck.xml`
+    (`<NumberOfDigits>1</NumberOfDigits>` on `DeckBPM`).

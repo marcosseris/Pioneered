@@ -227,6 +227,11 @@
                     <ObjectName>DeckBPM</ObjectName>
                     <TooltipId>visual_bpm</TooltipId>
                     <Channel><Variable name="channel"/></Channel>
+                    <!-- One decimal, like a CDJ. visual_bpm is published in
+                         whole 0.1 steps and the deck's tempo is held on the
+                         same grid, so this is the exact tempo rather than a
+                         rounding of it. -->
+                    <NumberOfDigits>1</NumberOfDigits>
                     <Connection>
                       <ConfigKey>[Channel<Variable name="channel"/>],visual_bpm</ConfigKey>
                     </Connection>

@@ -1,0 +1,343 @@
+Description: Steady one-decimal BPM readout, and a deck tempo that matches it
+ The deck's BPM number would not sit still: it drifted a few hundredths up and
+ down as a track played, which is unreadable at a glance and useless for
+ comparing two decks. Three changes, and the last two only make sense once the
+ first is in place.
+ .
+ 1. The cause. Rekordbox stores each beat's time rounded to a whole
+    millisecond -- 44 frames at 44.1 kHz -- and Beats::fromBeatPositions()
+    treats two consecutive beats as the same tempo only while their lengths
+    agree to within one frame. A perfectly steady track therefore arrived as a
+    variable-tempo grid with a tempo marker at nearly every beat, and
+    BpmControl's eight-beat local-BPM window walked up and down with the
+    rounding. But the file also records the tempo at each beat, as BPM x 100,
+    and when that never changes the track really is steady: the grid is then
+    rebuilt from that exact tempo, anchored on the mean of the rounded beats
+    so the rounding averages out, leaving it within half a millisecond of
+    rekordbox's own grid. Grids that really do change tempo are untouched.
+ .
+ 2. The readout shows one decimal place, and VisualsManager writes visual_bpm
+    in whole 0.1 steps with a little hysteresis, so a deck that is synced or
+    playing a genuinely drifting grid cannot flicker between two numbers
+    either.
+ .
+ 3. The tempo itself moves in the same 0.1 BPM steps. Rounding the display
+    alone would put two decks on the same number while they ran up to 0.05 BPM
+    apart, which is the reading that matters most. So the pitch fader now
+    lands on a rate at which the deck's BPM is a whole step
+    (BpmControl::snapRateRatioToBpmStep), and a freshly loaded track is put
+    back on the grid once its local BPM is known -- otherwise it would inherit
+    whatever rate the previous track left behind. Only those two user-driven
+    paths snap: sync writes rate_ratio directly and is left alone, and the
+    leader it follows is on the grid already. The fader is 14-bit, about 16000
+    positions across the range, so one step is far finer than it can be placed
+    by hand.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -69,6 +69,11 @@
+ constexpr mixxx::RgbColor kColorForIDPurple(0x9808F8);
+ constexpr mixxx::RgbColor kColorForIDNoColor(0x0);
+ 
++// XDJ: the tempo (BPM x 100) a rekordbox beat grid records for each beat has
++// to fall inside these before it is trusted to rebuild the grid.
++constexpr int kMinBeatGridTempo = 4000;  // 40 BPM
++constexpr int kMaxBeatGridTempo = 30000; // 300 BPM
++
+ struct memory_cue_loop_t {
+     mixxx::audio::FramePos startPosition;
+     mixxx::audio::FramePos endPosition;
+@@ -1059,6 +1064,24 @@
+                 }
+             }
+ 
++            // XDJ: every beat also records the tempo at that beat, as BPM
++            // times 100. A grid whose tempo never changes describes a track
++            // that runs at one steady speed, which is the case rebuilt
++            // exactly below.
++            int gridTempo = gridBeats.empty()
++                    ? 0
++                    : static_cast<int>(gridBeats.at(0)->tempo());
++            for (const auto& beat : gridBeats) {
++                if (static_cast<int>(beat->tempo()) != gridTempo) {
++                    gridTempo = 0;
++                    break;
++                }
++            }
++
++            // Index into `beats` of the first position whose time did not
++            // have to be clamped below, or -1 while there is none. Only
++            // unclamped positions say anything about where the grid sits.
++            int firstUnclampedIdx = -1;
+             std::size_t beatIdx = 0;
+             for (const auto& beat : gridBeats) {
+                 if (beatIdx++ < firstDownbeatIdx) {
+@@ -1068,14 +1091,61 @@
+                 // Ensure no offset times are less than 1
+                 if (time < 1) {
+                     time = 1;
++                } else if (firstUnclampedIdx < 0) {
++                    firstUnclampedIdx = static_cast<int>(beats.size());
+                 }
+                 beats << mixxx::audio::FramePos(sampleRateKhz * static_cast<double>(time));
+             }
+ 
+-            const auto pBeats = mixxx::Beats::fromBeatPositions(
+-                    sampleRate,
+-                    beats,
+-                    mixxx::rekordboxconstants::beatsSubversion);
++            // XDJ: rekordbox rounds every beat time to a whole millisecond,
++            // which is 44 frames of slop at 44.1 kHz. fromBeatPositions()
++            // calls two consecutive beats the same tempo only while their
++            // lengths agree to within one frame, so those rounded times put
++            // a tempo marker at very nearly every beat and a perfectly
++            // steady track arrives as a variable-tempo grid. BpmControl then
++            // measures the deck's BPM over an eight-beat window, and the
++            // rounding walks that measurement a few hundredths of a BPM up
++            // and down as the track plays: that wobble is what the deck's
++            // BPM readout showed.
++            //
++            // So where the file says the tempo never changes, build the grid
++            // from that exact tempo instead of from the rounded times. The
++            // anchor is the mean of the rounded beats measured against it,
++            // so the per-beat rounding averages out over the track instead
++            // of the whole grid hanging off whichever millisecond the first
++            // downbeat happened to land in, and the result stays within half
++            // a millisecond of rekordbox's own grid everywhere. Grids that
++            // really do change tempo keep their per-beat positions.
++            mixxx::BeatsPointer pBeats;
++            if (gridTempo >= kMinBeatGridTempo && gridTempo <= kMaxBeatGridTempo &&
++                    firstUnclampedIdx >= 0) {
++                const auto bpm = mixxx::Bpm(gridTempo / 100.0);
++                const double beatLengthFrames = 60.0 * sampleRate / bpm.value();
++                const int beatCount = static_cast<int>(beats.size());
++                double anchorSum = 0.0;
++                for (int i = firstUnclampedIdx; i < beatCount; ++i) {
++                    anchorSum += beats.at(i).value() - i * beatLengthFrames;
++                }
++                const double anchorFrames = anchorSum / (beatCount - firstUnclampedIdx);
++                // The anchor is the first downbeat, extrapolated back from
++                // the beats that were measured, so it stays the bar-phase
++                // marker the waveform's red bars count from. A grid whose
++                // first downbeat works out to before the start of the file
++                // cannot be expressed that way, so it keeps the old path.
++                if (anchorFrames >= 0.0) {
++                    pBeats = mixxx::Beats::fromConstTempo(sampleRate,
++                            mixxx::audio::FramePos(anchorFrames).toLowerFrameBoundary(),
++                            bpm,
++                            mixxx::rekordboxconstants::beatsSubversion);
++                }
++            }
++
++            if (!pBeats) {
++                pBeats = mixxx::Beats::fromBeatPositions(
++                        sampleRate,
++                        beats,
++                        mixxx::rekordboxconstants::beatsSubversion);
++            }
+             track->trySetBeats(pBeats);
+         } break;
+         case rekordbox_anlz_t::SECTION_TAGS_CUES: {
+--- a/src/track/bpm.h
++++ b/src/track/bpm.h
+@@ -7,6 +7,12 @@
+ 
+ namespace mixxx {
+ 
++// Pioneered: the deck's BPM readout shows one decimal place, and the deck's
++// own tempo is held on that same grid (BpmControl::snapRateRatioToBpmStep),
++// so the number on screen is the tempo exactly and two decks showing the same
++// number really are running at the same speed.
++constexpr double kBpmDisplayStep = 0.1;
++
+ // DTO for storing BPM information.
+ class Bpm final {
+ public:
+--- a/src/engine/controls/bpmcontrol.h
++++ b/src/engine/controls/bpmcontrol.h
+@@ -28,6 +28,13 @@
+         return m_pLocalBpm ? mixxx::Bpm(m_pLocalBpm->get()) : mixxx::Bpm();
+     }
+ 
++    /// Pioneered: returns the rate ratio nearest to `rateRatio` at which this
++    /// deck's BPM is a whole mixxx::kBpmDisplayStep, so the single decimal
++    /// place the readout shows is the whole truth about the deck's tempo and
++    /// two decks showing the same number are really matched. Returns
++    /// `rateRatio` unchanged while the deck has no usable local BPM.
++    double snapRateRatioToBpmStep(double rateRatio) const;
++
+     // When in sync lock mode, ratecontrol calls calcSyncedRate to figure out
+     // how fast the track should play back.  The returned rate is usually just
+     // the correct pitch to match bpms.  The usertweak argument represents
+@@ -182,6 +189,11 @@
+     // distance to get the virtual beat distance used for sync.
+     ControlValueAtomic<double> m_dUserOffset;
+     QAtomicInt m_resetSyncAdjustment;
++    // Pioneered: raised when a new track or beatgrid arrives, so the rate
++    // left behind by the previous tempo is put back onto the BPM step grid
++    // as soon as the new local BPM is known. Written from an engine worker
++    // thread, consumed in updateLocalBpm().
++    QAtomicInt m_reSnapRatePending{0};
+     PollingControlProxy m_pSyncMode;
+ 
+     TapFilter m_bpmTapFilter;   // threadsafe
+--- a/src/engine/controls/bpmcontrol.cpp
++++ b/src/engine/controls/bpmcontrol.cpp
+@@ -1,5 +1,7 @@
+ #include "engine/controls/bpmcontrol.h"
+ 
++#include <cmath>
++
+ #include "control/controlencoder.h"
+ #include "control/controllinpotmeter.h"
+ #include "control/controlproxy.h"
+@@ -1100,6 +1102,21 @@
+     m_pEngineBpm->set(m_pLocalBpm->get() * rateRatio);
+ }
+ 
++double BpmControl::snapRateRatioToBpmStep(double rateRatio) const {
++    const double localBpm = m_pLocalBpm->get();
++    // No grid, or the deck is reversed or stopped by the rate itself: there
++    // is no BPM to land on, so leave the rate alone.
++    if (localBpm <= 0.0 || rateRatio <= 0.0) {
++        return rateRatio;
++    }
++    const double steppedBpm = std::round(localBpm * rateRatio / mixxx::kBpmDisplayStep) *
++            mixxx::kBpmDisplayStep;
++    if (steppedBpm <= 0.0) {
++        return rateRatio;
++    }
++    return steppedBpm / localBpm;
++}
++
+ void BpmControl::slotUpdateRateSlider(double value) {
+     if (kLogger.traceEnabled()) {
+         kLogger.trace() << getGroup() << "BpmControl::slotUpdateRateSlider"
+@@ -1135,6 +1152,12 @@
+     }
+     qWarning() << "BpmControl::trackBeatsUpdated";
+     m_pBeats = pBeats;
++    // Pioneered: the new track inherits the rate the previous one was left
++    // at, which is not a whole BPM step at the new tempo. updateLocalBpm()
++    // puts it back on the grid once the new local BPM is known -- which is
++    // not necessarily in the call below, since the play position is not
++    // valid yet on a fresh load.
++    m_reSnapRatePending = true;
+     updateLocalBpm();
+     resetSyncAdjustment();
+     TrackPointer pTrack = getEngineBuffer()->getLoadedTrack();
+@@ -1233,6 +1256,22 @@
+         m_pLocalBpm->set(localBpmValue);
+         slotUpdateEngineBpm(m_pRateRatio->get());
+     }
++    // Pioneered: put the rate back on the BPM step grid for a newly loaded
++    // track (see trackBeatsUpdated()), so the readout is the deck's real
++    // tempo without the pitch fader having to be touched first. Skipped while
++    // the deck is synced: there the leader owns the rate, and the leader's
++    // own BPM is already on the grid.
++    if (localBpm.isValid() && m_reSnapRatePending.fetchAndStoreRelaxed(0) != 0 &&
++            !isSynchronized()) {
++        const double rateRatio = m_pRateRatio->get();
++        const double snappedRatio = snapRateRatioToBpmStep(rateRatio);
++        if (snappedRatio != rateRatio) {
++            m_pRateRatio->set(snappedRatio);
++            // Setting our own proxy does not call us back, so the engine BPM
++            // has to be brought along by hand.
++            slotUpdateEngineBpm(snappedRatio);
++        }
++    }
+     return localBpm;
+ }
+ 
+--- a/src/engine/controls/ratecontrol.cpp
++++ b/src/engine/controls/ratecontrol.cpp
+@@ -332,6 +332,15 @@
+ 
+ void RateControl::slotRateSliderChanged(double v) {
+     double rateRatio = 1.0 + m_pRateDir->get() * m_pRateRange->get() * v;
++    // Pioneered: the pitch fader moves the deck in whole 0.1 BPM steps, the
++    // same steps the BPM readout is written in, so the displayed number is
++    // the deck's exact tempo rather than a rounding of it. The fader is
++    // 14-bit, roughly 16000 positions across the range, so a step is still
++    // far finer than the fader can be placed by hand. Only this user-driven
++    // path snaps; sync writes rate_ratio directly and is left alone.
++    if (m_pBpmControl) {
++        rateRatio = m_pBpmControl->snapRateRatioToBpmStep(rateRatio);
++    }
+     m_pRateRatio->set(rateRatio);
+ }
+ 
+--- a/src/waveform/visualsmanager.h
++++ b/src/waveform/visualsmanager.h
+@@ -31,9 +31,15 @@
+     }
+ 
+   private:
++    /// Pioneered: the BPM the readout should show, in whole steps of
++    /// mixxx::kBpmDisplayStep, with hysteresis so it cannot flicker between
++    /// two numbers. See the definition for why that is needed at all.
++    double steppedBpm(double bpm);
++
+     const QString m_group;
+     int m_SlowTickCnt;
+     bool m_trackLoaded;
++    double m_visualBpm;
+ 
+     std::unique_ptr<ControlProxy> m_pPlayButton;
+     std::unique_ptr<ControlProxy> m_pLoopEnabled;
+--- a/src/waveform/visualsmanager.cpp
++++ b/src/waveform/visualsmanager.cpp
+@@ -1,12 +1,16 @@
+ #include "waveform/visualsmanager.h"
+ 
++#include <cmath>
++
+ #include "control/controlobject.h"
++#include "track/bpm.h"
+ #include "waveform/visualplayposition.h"
+ 
+ DeckVisuals::DeckVisuals(const QString& group)
+         : m_group(group),
+           m_SlowTickCnt(0),
+           m_trackLoaded(false),
++          m_visualBpm(0.0),
+           m_pPlayButton(std::make_unique<ControlProxy>(ConfigKey(group, "play"))),
+           m_pLoopEnabled(std::make_unique<ControlProxy>(ConfigKey(group, "loop_enabled"))),
+           m_pEngineBpm(std::make_unique<ControlProxy>(ConfigKey(group, "bpm"))),
+@@ -20,6 +24,25 @@
+     m_pVisualPlayPos = VisualPlayPosition::getVisualPlayPosition(m_group);
+ }
+ 
++// Pioneered: the deck's tempo is held on the mixxx::kBpmDisplayStep grid by
++// BpmControl::snapRateRatioToBpmStep, so the engine BPM normally lands on a
++// whole step already and this only writes it down exactly. It still matters
++// for the cases the snap deliberately keeps its hands off: a synced deck
++// follows its leader's rate, and a track whose beatgrid really does drift
++// measures a few hundredths either way as it plays. Rounding alone would
++// swap the readout between two numbers whenever such a value sat on a step
++// boundary, so the current step is only left once the reading is clear of
++// it -- which one whole step of the pitch fader always is.
++double DeckVisuals::steppedBpm(double bpm) {
++    if (bpm <= 0.0) {
++        m_visualBpm = 0.0;
++    } else if (m_visualBpm <= 0.0 ||
++            std::fabs(bpm - m_visualBpm) >= mixxx::kBpmDisplayStep * 0.75) {
++        m_visualBpm = std::round(bpm / mixxx::kBpmDisplayStep) * mixxx::kBpmDisplayStep;
++    }
++    return m_visualBpm;
++}
++
+ // this is called from WaveformWidgetFactory::render in the main thread with the
+ // configured waveform frame rate
+ void DeckVisuals::process(double remainingTimeTriggerSeconds) {
+@@ -47,7 +70,7 @@
+     // Update the BPM even more slowly
+     m_SlowTickCnt = (m_SlowTickCnt + 1) % kSlowUpdateDivider;
+     if (m_SlowTickCnt == 0 || !trackLoaded) {
+-        m_pVisualBpm->set(m_pEngineBpm->get());
++        m_pVisualBpm->set(steppedBpm(m_pEngineBpm->get()));
+     }
+     m_pVisualKey->set(m_pEngineKey->get());
+ 
