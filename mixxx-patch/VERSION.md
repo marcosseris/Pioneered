@@ -572,8 +572,24 @@
       The DDJ-400 fader is 14-bit (`(MSB << 7) + LSB`, ~16000 positions
       across the range), so at 140 BPM and ±8% one step is about 0.45% of
       the fader's travel — far finer than it can be placed by hand.
+    * **Four sync tests move with it.** `debian/rules` runs `mixxx-test`, so a
+      deliberate behaviour change that any test reads back has to be answered
+      in the test or the deb does not build — the first cut of this patch
+      compiled clean and failed there. `UserTweakPreservedInSeek`,
+      `FollowerUserTweakPreservedInLeaderChange` and
+      `LeaderUserTweakPreservedInLeaderChange` each build a grid from
+      `kDivisibleBpm` (44100/344 ≈ 128.1976 — picked for whole-sample beat
+      positions, not for a round BPM) and then assert the deck's `bpm` equals
+      it; they now expect the 128.2 it steps to (`kDivisibleSteppedBpm`).
+      `SyncWithoutBeatgrid` exists to prove that enabling sync does not
+      *reset* the rate (upstream issue #9391) and asserted `rate` to the last
+      bit; enabling sync runs `slotRateRatioChanged`, which writes the slider
+      back from the stepped ratio, so it moves by up to half a step — about
+      0.001 of its travel there — and the assertion becomes an `EXPECT_NEAR`
+      with 0.01, still orders of magnitude tighter than the reset it guards
+      against. Nothing is skipped or disabled.
     Touches `src/library/rekordbox/rekordboxfeature.cpp`, `src/track/bpm.h`,
     `src/engine/controls/bpmcontrol.{h,cpp}`,
     `src/engine/controls/ratecontrol.cpp`,
-    `src/waveform/visualsmanager.{h,cpp}`. Skin side: `deck.xml`
-    (`<NumberOfDigits>1</NumberOfDigits>` on `DeckBPM`).
+    `src/waveform/visualsmanager.{h,cpp}`, `src/test/enginesynctest.cpp`.
+    Skin side: `deck.xml` (`<NumberOfDigits>1</NumberOfDigits>` on `DeckBPM`).

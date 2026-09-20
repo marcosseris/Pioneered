@@ -32,6 +32,15 @@ Description: Steady one-decimal BPM readout, and a deck tempo that matches it
     leader it follows is on the grid already. The fader is 14-bit, about 16000
     positions across the range, so one step is far finer than it can be placed
     by hand.
+ .
+ Four EngineSyncTest cases read a deck's BPM or rate back and assert the
+ unstepped value, so they are updated rather than left failing: the three that
+ build a beatgrid from kDivisibleBpm (44100/344, about 128.1976, chosen for
+ whole-sample beat positions rather than for a round BPM) now expect the
+ 128.2 the deck lands on, and SyncWithoutBeatgrid -- which exists to prove
+ enabling sync does not *reset* the rate -- allows the half-step the slider
+ moves when sync writes it back from the stepped ratio, about 0.001 of its
+ travel, instead of demanding the rate be untouched to the last bit.
 Author: Pioneered CI <pioneered-build@localhost>
 Forwarded: no
 
@@ -341,3 +350,69 @@ Forwarded: no
      }
      m_pVisualKey->set(m_pEngineKey->get());
  
+--- a/src/test/enginesynctest.cpp
++++ b/src/test/enginesynctest.cpp
+@@ -17,6 +17,12 @@
+ constexpr double kMaxFloatingPointErrorLowPrecision = 0.005;
+ constexpr double kMaxFloatingPointErrorHighPrecision = 0.0000000000000005;
+ constexpr double kMaxBeatDistanceEpsilon = 1e-9;
++// Pioneered: BpmControl holds a deck's tempo on the mixxx::kBpmDisplayStep
++// grid, so a track whose beatgrid BPM is not a whole step plays at the
++// nearest step instead. kDivisibleBpm below (44100/344, about 128.1976) is
++// such a BPM, and the tests that read a deck's BPM back therefore expect the
++// step it lands on rather than the grid's own value.
++constexpr double kDivisibleSteppedBpm = 128.2;
+ } // namespace
+ 
+ /// Tests for Sync Lock.
+@@ -2356,9 +2362,9 @@
+     ControlObject::set(ConfigKey(m_sGroup2, "play"), 1.0);
+ 
+     ProcessBuffer();
+-    EXPECT_DOUBLE_EQ(kDivisibleBpm,
++    EXPECT_DOUBLE_EQ(kDivisibleSteppedBpm,
+             ControlObject::getControl(ConfigKey(m_sGroup1, "bpm"))->get());
+-    EXPECT_DOUBLE_EQ(kDivisibleBpm,
++    EXPECT_DOUBLE_EQ(kDivisibleSteppedBpm,
+             ControlObject::getControl(ConfigKey(m_sGroup2, "bpm"))->get());
+ 
+     EXPECT_NEAR(0.024806201,
+@@ -2445,9 +2451,9 @@
+     EXPECT_TRUE(isFollower(m_sGroup2));
+ 
+     ProcessBuffer();
+-    EXPECT_DOUBLE_EQ(kDivisibleBpm,
++    EXPECT_DOUBLE_EQ(kDivisibleSteppedBpm,
+             ControlObject::getControl(ConfigKey(m_sGroup1, "bpm"))->get());
+-    EXPECT_DOUBLE_EQ(kDivisibleBpm,
++    EXPECT_DOUBLE_EQ(kDivisibleSteppedBpm,
+             ControlObject::getControl(ConfigKey(m_sGroup2, "bpm"))->get());
+ 
+     for (int i = 0; i < 5; ++i) {
+@@ -2533,9 +2539,9 @@
+     EXPECT_TRUE(isFollower(m_sGroup2));
+ 
+     ProcessBuffer();
+-    EXPECT_DOUBLE_EQ(kDivisibleBpm,
++    EXPECT_DOUBLE_EQ(kDivisibleSteppedBpm,
+             ControlObject::getControl(ConfigKey(m_sGroup1, "bpm"))->get());
+-    EXPECT_DOUBLE_EQ(kDivisibleBpm,
++    EXPECT_DOUBLE_EQ(kDivisibleSteppedBpm,
+             ControlObject::getControl(ConfigKey(m_sGroup2, "bpm"))->get());
+ 
+     // Apply user tweak offset to leader -- to test the bug we found, we need
+@@ -2827,8 +2833,12 @@
+ 
+     ProcessBuffer();
+ 
+-    EXPECT_DOUBLE_EQ(0.5,
+-            ControlObject::get(ConfigKey(m_sGroup1, "rate")));
++    // Pioneered: enabling sync writes the rate slider back from the deck's
++    // rate ratio, which is held on the mixxx::kBpmDisplayStep grid, so the
++    // slider lands within half a step of where it was put -- about 0.001 of
++    // its travel at this BPM and rate range. What this test is about is that
++    // the rate is not *reset*, which would take it to 0.
++    EXPECT_NEAR(0.5, ControlObject::get(ConfigKey(m_sGroup1, "rate")), 0.01);
+ }
+ 
+ TEST_F(EngineSyncTest, QuantizeHotCueActivate) {
