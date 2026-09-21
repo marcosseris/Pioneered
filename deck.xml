@@ -334,19 +334,19 @@
         </Mark>
             <Mark>
               <Control>loop_start_position</Control>
-              <Color>#6ee128</Color>
+              <Color>#ff8c00</Color>
             </Mark>
             <Mark>
               <Control>loop_end_position</Control>
-              <Color>#6ee128</Color>
+              <Color>#ff8c00</Color>
             </Mark>
             <MarkRange>
               <StartControl>loop_start_position</StartControl>
               <EndControl>loop_end_position</EndControl>
               <EnabledControl>loop_enabled</EnabledControl>
-              <Color>#6ee128</Color>
+              <Color>#ff8c00</Color>
               <Opacity>0.8</Opacity>
-              <DisabledColor>#acacac</DisabledColor>
+              <DisabledColor>#c06800</DisabledColor>
               <DisabledOpacity>0.4</DisabledOpacity>
             </MarkRange>
             <Connection>

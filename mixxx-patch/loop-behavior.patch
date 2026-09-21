@@ -1,0 +1,258 @@
+Description: Loops that stay in time, and a loop section that cannot latch
+ 1. Loop quantise always takes the *nearest* beat, passed or not. Mixxx
+    snapped loop-in and loop-out to the closest beat only while no loop was
+    running; once a loop was active -- which is the state the press half of
+    every IN/OUT tap puts the deck in, via m_bAdjustingLoopIn/Out -- it
+    snapped loop-in to the previous beat and loop-out to the *next* one. A
+    tap a few milliseconds after the beat therefore bought a loop one whole
+    beat too long, and the deck dropped out of time. Both ends now take the
+    nearest beat and only fall back to the beat on the far side when the
+    nearest one would invert the loop (or run off the end of the track),
+    which LoopingControl answers by discarding the loop. Snapping to a beat
+    that has just gone by does not cost the mix its timing: the play position
+    is carried into the new loop in whole loop lengths by
+    adjustedPositionInsideAdjustedLoop(), so it keeps its place in the bar.
+ 2. DDJ-400 mapping, SHIFT + LOOP IN / LOOP OUT: the guard read
+    engine.getValue(group, "loop_enabled" === 0), i.e. it asked the deck for
+    a control named "false" and got 0 back, so it never blocked anything.
+    The jog-wheel loop adjust could be armed on a deck with no loop, and
+    nothing clears the flag until a loop has been enabled and disabled again.
+    While it is set jogTouch() returns early, so the platter stops scratching
+    altogether, and as soon as a loop does appear the wheel drags the loop in
+    point instead of nudging the track. The guard now reads the control, the
+    flags are cleared when a deck loads a track, and a jog-wheel adjust is
+    clamped so the two loop points can never meet or cross (which makes
+    LoopingControl throw the loop away mid-adjust) and the out point cannot
+    be pushed past the end of the track.
+ 3. The DDJ-400 mapping switches QUANTIZE on for both decks at startup, like
+    a Pioneer player boots. Mixxx defaults it off per deck and then remembers
+    it, so a rig could sit with one deck quantised and the other not. The
+    on-screen QUANTIZE button still turns it off for the rest of the session.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+--- a/src/engine/controls/loopingcontrol.cpp
++++ b/src/engine/controls/loopingcontrol.cpp
+@@ -727,18 +727,23 @@
+                     (nextBeatPosition - position > position - prevBeatPosition)
+                     ? prevBeatPosition
+                     : nextBeatPosition;
+-            if (m_bAdjustingLoopIn) {
+-                if (closestBeatPosition == position) {
+-                    quantizedBeatPosition = closestBeatPosition;
+-                } else {
+-                    quantizedBeatPosition = prevBeatPosition;
+-                }
+-            } else {
+-                if (closestBeatPosition > info.trackEndPosition) {
+-                    quantizedBeatPosition = prevBeatPosition;
+-                } else {
+-                    quantizedBeatPosition = closestBeatPosition;
+-                }
++            // Pioneered: the loop-in lands on the beat you were nearest when
++            // you hit the button, whether that beat is just ahead or has just
++            // gone by. Stock Mixxx only did that with no loop running; with
++            // one running it took the *previous* beat instead, and the press
++            // half of every IN tap sets m_bAdjustingLoopIn, so a tap a hair
++            // early moved the in point a whole beat back. Snapping to a beat
++            // that has gone by costs the mix nothing in timing: the play
++            // position is carried into the new loop in whole loop lengths by
++            // adjustedPositionInsideAdjustedLoop().
++            quantizedBeatPosition = closestBeatPosition;
++            if (closestBeatPosition > info.trackEndPosition ||
++                    (loopInfo.endPosition.isValid() &&
++                            closestBeatPosition >= loopInfo.endPosition)) {
++                // Never snap forward past the loop-out point or off the end
++                // of the track: that inverts the loop, and the code below
++                // answers an inverted loop by throwing it away.
++                quantizedBeatPosition = prevBeatPosition;
+             }
+             position = quantizedBeatPosition;
+         }
+@@ -887,22 +892,21 @@
+                     (nextBeatPosition - position > position - prevBeatPosition)
+                     ? prevBeatPosition
+                     : nextBeatPosition;
+-            if (m_bAdjustingLoopOut) {
+-                if (closestBeatPosition == position) {
+-                    quantizedBeatPosition = closestBeatPosition;
+-                } else {
+-                    if (nextBeatPosition > info.trackEndPosition) {
+-                        quantizedBeatPosition = prevBeatPosition;
+-                    } else {
+-                        quantizedBeatPosition = nextBeatPosition;
+-                    }
+-                }
+-            } else {
+-                if (closestBeatPosition > info.trackEndPosition) {
+-                    quantizedBeatPosition = prevBeatPosition;
+-                } else {
+-                    quantizedBeatPosition = closestBeatPosition;
+-                }
++            // Pioneered: same rule as the loop-in above -- the nearest beat,
++            // passed or not. Stock Mixxx grew the loop to the *next* beat
++            // whenever a loop was already running (m_bAdjustingLoopOut, which
++            // the press half of every OUT tap sets), so releasing OUT a few
++            // milliseconds after the beat handed you a loop one whole beat
++            // too long and dropped the deck out of time.
++            quantizedBeatPosition = closestBeatPosition;
++            if (closestBeatPosition > info.trackEndPosition ||
++                    (loopInfo.startPosition.isValid() &&
++                            closestBeatPosition <= loopInfo.startPosition)) {
++                // Never snap back onto or behind the loop-in point, and never
++                // off the end of the track.
++                quantizedBeatPosition = nextBeatPosition > info.trackEndPosition
++                        ? prevBeatPosition
++                        : nextBeatPosition;
+             }
+             // Note: with quantize enabled and playpos AFTER an inactive loop,
+             // the new loop_out might snap to the exact the same position as before.
+--- a/src/test/looping_control_test.cpp
++++ b/src/test/looping_control_test.cpp
+@@ -353,10 +353,17 @@
+     EXPECT_TRUE(m_pBeatLoop4Enabled->toBool());
+ 
+     // Check that beatloop_4_enabled is reset to 0 when changing the loop size.
++    // Pioneered: the jump has to be carried out before the button is
++    // released, because loop_out now snaps to the beat nearest the play
++    // position rather than to the next one. Without this buffer the deck is
++    // still sitting 250 frames past the loop in point when OUT comes up, the
++    // nearest beat is the loop in point itself and the press is ignored --
++    // the loop size never changes and there is nothing left to assert.
+     m_pBeatJumpSize->set(1);
+     m_pButtonLoopOut->set(1);
+     m_pButtonBeatJumpForward->set(1);
+     m_pButtonBeatJumpForward->set(0);
++    ProcessBuffer();
+     m_pButtonLoopOut->set(0);
+     ProcessBuffer();
+     EXPECT_EQ(m_pClosestBeat->get(), m_pLoopEndPoint->get());
+--- a/res/controllers/Pioneer-DDJ-400-script.js
++++ b/res/controllers/Pioneer-DDJ-400-script.js
+@@ -143,6 +143,14 @@
+ PioneerDDJ400.loopAdjustOut = [false, false];
+ PioneerDDJ400.loopAdjustMultiply = 50;
+ 
++// Pioneered: smallest gap a jog-wheel loop adjust may leave between the in
++// and out points, in engine samples. Mirrors LoopingControl's
++// kMinimumAudibleLoopSizeFrames (150 frames = 300 samples). Writing a
++// loop_start_position at or past the loop end -- easy to do with a flick of
++// the platter on a short loop -- makes LoopingControl throw the loop away on
++// the spot, so the loop vanishes mid-adjust and the deck plays straight on.
++PioneerDDJ400.loopAdjustMinSamples = 300;
++
+ // Beatjump pad (beatjump_size values)
+ PioneerDDJ400.beatjumpSizeForPad = {
+     0x20: -1, // PAD 1
+@@ -249,6 +257,20 @@
+     engine.makeConnection("[Channel1]", "loop_enabled", PioneerDDJ400.loopToggle);
+     engine.makeConnection("[Channel2]", "loop_enabled", PioneerDDJ400.loopToggle);
+ 
++    // XDJ: a Pioneer player boots with QUANTIZE on, and loops that are not on
++    // the grid are the main way a loop ends up out of time. Mixxx defaults the
++    // per-deck control to off and then remembers whatever it was last set to,
++    // so set it here on every start. The QUANTIZE button on the touchscreen
++    // still turns it off again for the rest of the session.
++    engine.setValue("[Channel1]", "quantize", 1);
++    engine.setValue("[Channel2]", "quantize", 1);
++
++    // Pioneered: a deck that loads a new track has no loop any more, so the
++    // jog-wheel loop adjust must not stay armed -- it would swallow the
++    // platter (jogTouch returns early while it is set).
++    engine.makeConnection("[Channel1]", "track_loaded", PioneerDDJ400.clearLoopAdjust);
++    engine.makeConnection("[Channel2]", "track_loaded", PioneerDDJ400.clearLoopAdjust);
++
+     for (let i = 1; i <= 3; i++) {
+         engine.makeConnection("[EffectRack1_EffectUnit1_Effect" + i +"]", "enabled", PioneerDDJ400.toggleFxLight);
+     }
+@@ -433,7 +455,16 @@
+ //
+ 
+ PioneerDDJ400.toggleLoopAdjustIn = function(channel, _control, value, _status, group) {
+-    if (value === 0 || engine.getValue(group, "loop_enabled" === 0)) {
++    // Pioneered: this guard used to read
++    // engine.getValue(group, "loop_enabled" === 0) -- the comparison sits
++    // inside the call, so it asked the deck for a control named "false",
++    // got 0 back and never blocked anything. SHIFT + LOOP IN therefore armed
++    // the jog-wheel loop adjust on a deck with no loop, and nothing clears
++    // that flag until a loop has been enabled and disabled again. While it is
++    // set jogTouch() returns early, so the platter stops scratching, and the
++    // moment a loop does appear the wheel drags the loop in point around
++    // instead of nudging the track.
++    if (value === 0 || engine.getValue(group, "loop_enabled") === 0) {
+         return;
+     }
+     PioneerDDJ400.loopAdjustIn[channel] = !PioneerDDJ400.loopAdjustIn[channel];
+@@ -441,13 +472,41 @@
+ };
+ 
+ PioneerDDJ400.toggleLoopAdjustOut = function(channel, _control, value, _status, group) {
+-    if (value === 0 || engine.getValue(group, "loop_enabled" === 0)) {
++    // Pioneered: same broken guard as toggleLoopAdjustIn above.
++    if (value === 0 || engine.getValue(group, "loop_enabled") === 0) {
+         return;
+     }
+     PioneerDDJ400.loopAdjustOut[channel] = !PioneerDDJ400.loopAdjustOut[channel];
+     PioneerDDJ400.loopAdjustIn[channel] = false;
+ };
+ 
++// Pioneered: move one end of the loop by a jog wheel tick, keeping the loop
++// intact. The two points may never meet: see loopAdjustMinSamples.
++PioneerDDJ400.adjustLoopPoint = function(group, adjustIn, ticks) {
++    const start = engine.getValue(group, "loop_start_position");
++    const end = engine.getValue(group, "loop_end_position");
++
++    if (start < 0 || end < 0) {
++        return;
++    }
++
++    const delta = ticks * PioneerDDJ400.loopAdjustMultiply;
++
++    if (adjustIn) {
++        const limit = end - PioneerDDJ400.loopAdjustMinSamples;
++        engine.setValue(group, "loop_start_position",
++            Math.max(0, Math.min(start + delta, limit)));
++    } else {
++        const limit = start + PioneerDDJ400.loopAdjustMinSamples;
++        const trackEnd = engine.getValue(group, "track_samples");
++        let target = Math.max(limit, end + delta);
++        if (trackEnd > 0) {
++            target = Math.min(target, Math.max(limit, trackEnd));
++        }
++        engine.setValue(group, "loop_end_position", target);
++    }
++};
++
+ // Two signals are sent here so that the light stays lit/unlit in its shift state too
+ PioneerDDJ400.setReloopLight = function(status, value) {
+     midi.sendShortMsg(status, 0x4D, value);
+@@ -500,6 +559,13 @@
+     PioneerDDJ400.setLoopButtonLights(status, 0x7F);
+ };
+ 
++PioneerDDJ400.clearLoopAdjust = function(_value, group) {
++    const channel = group === "[Channel1]" ? 0 : 1;
++
++    PioneerDDJ400.loopAdjustIn[channel] = false;
++    PioneerDDJ400.loopAdjustOut[channel] = false;
++};
++
+ PioneerDDJ400.loopToggle = function(value, group, control) {
+     const status = group === "[Channel1]" ? 0x90 : 0x91,
+         channel = group === "[Channel1]" ? 0 : 1;
+@@ -580,13 +646,11 @@
+     const loopEnabled = engine.getValue(group, "loop_enabled");
+     if (loopEnabled > 0) {
+         if (PioneerDDJ400.loopAdjustIn[channel]) {
+-            newVal = newVal * PioneerDDJ400.loopAdjustMultiply + engine.getValue(group, "loop_start_position");
+-            engine.setValue(group, "loop_start_position", newVal);
++            PioneerDDJ400.adjustLoopPoint(group, true, newVal);
+             return;
+         }
+         if (PioneerDDJ400.loopAdjustOut[channel]) {
+-            newVal = newVal * PioneerDDJ400.loopAdjustMultiply + engine.getValue(group, "loop_end_position");
+-            engine.setValue(group, "loop_end_position", newVal);
++            PioneerDDJ400.adjustLoopPoint(group, false, newVal);
+             return;
+         }
+     }

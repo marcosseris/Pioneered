@@ -25,6 +25,11 @@ Border ladder (dim -> bright):
   #3c3c46 (resting) -> #4a4a52 (inactive chrome) -> #5a5a66 (hover)
         -> #6a6a76 (pressed)
 Dim text: #8f8f99
+Loop orange: #ff8c00   (loop that is set but not running: #c06800)
+  Everything to do with loops is orange, like Pioneer gear: the loop range
+  and the LOOP IN / LOOP OUT markers on the scrolling waveform and on the
+  overviews (waveform.xml, deck.xml), and the loop size readout beside the
+  waveform.
 
 Radius scale: 3px small controls, 4px touch targets, 8px panels/banners.
 Deliberate exceptions: the CDJ notch on #WaveformInfo_Header (10px 25px)
@@ -484,19 +489,20 @@ WLabel {
 }
 
 #WaveformInfo_Loop_Icon {
-  color: white;
+  color: #ff8c00;
   font-size: 20px;
   font-weight: bold;
   margin: 2px;
 }
 
 #WaveformInfo_BeatloopSizeSpinBox {
+  color: #ff8c00;
   margin: 3px;
   padding: -4px -4px 0px -8px;
 }
 
 WBeatSpinBox {
-  color: #ffffff;
+  color: #ff8c00;
   font-size: 14px;
   font-weight: bold;
   background-color: #000000;

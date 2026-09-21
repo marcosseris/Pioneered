@@ -593,3 +593,68 @@
     `src/engine/controls/ratecontrol.cpp`,
     `src/waveform/visualsmanager.{h,cpp}`, `src/test/enginesynctest.cpp`.
     Skin side: `deck.xml` (`<NumberOfDigits>1</NumberOfDigits>` on `DeckBPM`).
+
+27. `loop-behavior.patch` (added 2026-09-21, r35) — loops land on the beat
+    they were meant to land on, and the loop section can no longer latch the
+    platter.
+    * **Loop quantise takes the nearest beat, passed or not.**
+      `LoopingControl::setLoopInToCurrentPosition()` and
+      `setLoopOutToCurrentPosition()` only snapped to the closest beat while
+      no loop was running. Once one was — and the *press* half of every IN or
+      OUT tap puts the deck in exactly that state, via `m_bAdjustingLoopIn` /
+      `m_bAdjustingLoopOut` — loop-in took the previous beat and loop-out the
+      **next** one, so a tap a few milliseconds late bought a loop a whole
+      beat too long. Both now take the nearest beat, and fall back to the
+      beat on the far side only when the nearest would put the point at or
+      past the other end of the loop (or off the end of the track), which
+      `setLoopInToCurrentPosition()` answers by clearing the loop out and
+      dropping the loop. A point that lands behind the play position does not
+      cost the deck its timing: the `LoopSeekMode::Changed` path walks the
+      play position back in whole loop lengths through
+      `adjustedPositionInsideAdjustedLoop()`, so the deck keeps its place in
+      the bar — the same mechanism the existing
+      `LoopInOutButtons_QuantizeEnabled` test checks when it expects the play
+      position at frame 250 after a loop-out four beats along.
+    * **One test moves with it.** `debian/rules` runs `mixxx-test`, so a
+      deliberate behaviour change a test reads back has to be answered.
+      `LoopInOutButtons_QuantizeEnabled` ends by shrinking a 4-beat loop to
+      one beat to prove `beatloop_4_enabled` clears, and it did that by
+      holding OUT, queueing a 1-beat jump and releasing — without ever
+      processing a buffer, so the deck was still 250 frames past the loop in
+      point when the button came up and only the old "snap to the next beat"
+      rule moved the out point at all. It now processes the queued jump
+      before releasing OUT (one added `ProcessBuffer()`); the nearest beat is
+      then the one the jump landed on and the assertions are unchanged.
+    * **The DDJ-400's SHIFT + LOOP IN / OUT could kill the platter.** The
+      guard in `toggleLoopAdjustIn` / `toggleLoopAdjustOut` read
+      `engine.getValue(group, "loop_enabled" === 0)` — the comparison is
+      *inside* the call, so the mapping asked the deck for a control named
+      `false`, got 0 back, and never refused anything. Arming the jog-wheel
+      loop adjust on a deck with no loop leaves a flag that only a loop being
+      enabled and then disabled clears, and while it is set `jogTouch()`
+      returns early: the platter stops scratching, and the moment a loop does
+      appear the wheel drags the loop in point instead of nudging the track.
+      The guard now reads the control; the flags are also cleared on
+      `track_loaded`.
+    * **A jog-wheel loop adjust can no longer destroy the loop.** It wrote
+      `loop_start_position` / `loop_end_position` straight through, and
+      `LoopingControl::slotLoopStartPos()` throws the loop away the moment
+      the in point reaches the out point — a flick of the platter on a short
+      loop was enough. The adjust is clamped to leave
+      `loopAdjustMinSamples` (300 engine samples, mirroring
+      `kMinimumAudibleLoopSizeFrames`) between the two points, and the out
+      point is kept inside the track.
+    * **QUANTIZE comes up on at startup.** Mixxx defaults `[ChannelN],quantize`
+      off per deck and then persists whatever it was last set to, so a rig can
+      sit with one deck quantised and the other not — the deck-dependent half
+      of "sometimes loops work". `PioneerDDJ400.init` sets it on both decks on
+      every start, the way a Pioneer player boots; the on-screen QUANTIZE
+      button still turns it off for the rest of the session. Done in the
+      mapping rather than in `QuantizeControl` so that Mixxx's own default,
+      which its sync and hotcue tests are written against, is untouched.
+    Touches `src/engine/controls/loopingcontrol.cpp`,
+    `src/test/looping_control_test.cpp`,
+    `res/controllers/Pioneer-DDJ-400-script.js`. Skin side: `deck.xml`,
+    `waveform.xml`, `style.qss` — everything to do with loops is Pioneer
+    orange (`#ff8c00`, `#c06800` when the loop is set but not running)
+    instead of the play button's green.

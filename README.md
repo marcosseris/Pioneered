@@ -23,6 +23,8 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   **USB A / USB B** source buttons, and full-width deck overviews along the
   bottom (loading is the DDJ-400's own LOAD 1 / LOAD 2 buttons — no duplicate
   on screen)
+* Loops are Pioneer orange — the loop region and the LOOP IN / LOOP OUT
+  markers on the waveform and both overviews, and the loop size readout
 
 ### Patched Mixxx (mixxx-patch/, prebuilt in Releases)
 * **USB workflow like a real XDJ**
@@ -58,6 +60,14 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
     decks together, clockwise to zoom in, ten steps); on Browse/Search the
     same knob scrolls the track list as before
   * Loop-out with no loop-in starts the loop from the cue point
+  * **Loops that stay in time**: a loop point always snaps to the beat you
+    were nearest when you hit the button, whether it has just gone by or is
+    just ahead, and the deck keeps its place in the bar when it does. The
+    DDJ-400's SHIFT + LOOP IN / OUT adjust can no longer arm itself on a deck
+    with no loop (which used to leave the platter unable to scratch), and a
+    jog-wheel loop adjust can no longer push the two loop points together and
+    destroy the loop. QUANTIZE comes up on for both decks at every start, as
+    on a Pioneer player
   * Filter effect with a Pioneer-style response curve and gentler default Q
 * **Hardware robustness**
   * DDJ-400 (or any PortMidi controller) **auto-reconnects** if the USB
