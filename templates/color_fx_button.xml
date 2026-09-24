@@ -12,7 +12,7 @@
 <Template>
   <PushButton>
     <ObjectName>ColorFxButton</ObjectName>
-    <Size>0me,34f</Size>
+    <Size>0me,44f</Size>
     <NumberStates>2</NumberStates>
     <State>
       <Number>0</Number>
