@@ -85,6 +85,13 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
     buffers, so the feel no longer depends on the audio latency setting). How
     hard it pushes is yours to set, from the touchscreen — Cog → **JOG
     SENSITIVITY** — and the setting survives a reboot
+  * **Backspins that sound like a backspin**: let go of a platter that is
+    still spinning and the track follows the wheel until it has spun down,
+    then eases back into play, instead of snapping straight back to forward
+    playback
+  * **Hot cue pads play like a CDJ**: a pad pressed on a paused deck starts
+    playing from the cue and keeps playing after you let go (a saved loop pad
+    starts its loop)
 * **Reliability**
   * Hardened rekordbox database parser: corrupt/truncated `EXPORT.PDB` files
     (e.g. from pulling a stick mid-write) can no longer crash Mixxx

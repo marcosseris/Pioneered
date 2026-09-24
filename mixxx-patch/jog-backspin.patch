@@ -1,0 +1,145 @@
+Description: DDJ-400 backspins follow the wheel after the hand lets go
+ jog-nudge.patch made jogTurn() scratch only for the platter message (0x22)
+ while the touch sensor says the top is held, and end any scratch still
+ running when another rotation message arrives. A backspin trips both: the
+ hand leaves the platter while it is still spinning, the touch sensor
+ releases, and the free-spinning wheel keeps sending rotation messages. The
+ first of them killed the scratch outright and the rest became pitch-bend
+ nudges -- the reverse spin turned into forward playback dragged backwards
+ through the 60 ms jog filter, which is the "weird" backspin sound.
+ .
+ jogTouch() now checks, on release, whether the platter was still moving
+ (a scratch tick within spinReleaseMs = 30 ms). If so, the deck stays in
+ scratch mode and every rotation message from that wheel keeps driving it
+ (PioneerDDJ400.spinning), until a 25 ms check window sees the wheel stop,
+ or slow to the deck's playback speed going forwards; then the usual
+ scratchDisable() ramp hands the deck back to the transport. A new touch
+ catches the spin. Lifting the hand off a still platter releases at once, as
+ before, and a side-ring nudge after the spin has ended is still a pitch
+ bend.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+diff --git a/res/controllers/Pioneer-DDJ-400-script.js b/res/controllers/Pioneer-DDJ-400-script.js
+--- a/res/controllers/Pioneer-DDJ-400-script.js
++++ b/res/controllers/Pioneer-DDJ-400-script.js
+@@ -128,6 +128,24 @@ PioneerDDJ400.jogPlatterScratchCC = 0x22;
+ // allowed to scratch. Indexed by channel (0 = deck 1, 1 = deck 2).
+ PioneerDDJ400.jogTouched = [false, false];
+ 
++// Pioneered: backspins. When the hand leaves a platter that is still moving,
++// the wheel keeps driving the track until it slows down, as it does on Pioneer
++// gear -- instead of the deck snapping back to forward play the instant the
++// touch sensor lets go. The platter counts as moving if it sent a scratch tick
++// within spinReleaseMs of the release. While the spin lasts, every rotation
++// message from the wheel keeps scratching; the spin ends when a spinCheckMs
++// window passes with no movement, or when the wheel has slowed to the deck's
++// playback speed going forwards.
++PioneerDDJ400.spinReleaseMs = 30;
++PioneerDDJ400.spinCheckMs = 25;
++// Scratch ticks per second at normal playback speed: the 720 intervals per
++// revolution and 33 1/3 rpm passed to scratchEnable in jogTouch.
++PioneerDDJ400.jogTicksPerSecond = 720 * (33 + 1/3) / 60;
++PioneerDDJ400.spinning = [false, false];
++PioneerDDJ400.spinTicks = [0, 0];
++PioneerDDJ400.spinTimer = [0, 0];
++PioneerDDJ400.lastScratchTick = [0, 0];
++
+ PioneerDDJ400.tempoRanges = [0.06, 0.10, 0.16, 0.25];
+ 
+ PioneerDDJ400.shiftButtonDown = [false, false];
+@@ -216,8 +234,9 @@ PioneerDDJ400.init = function() {
+     PioneerDDJ400.toggleLight(PioneerDDJ400.lights.deck1.vuMeter, false);
+     PioneerDDJ400.toggleLight(PioneerDDJ400.lights.deck2.vuMeter, false);
+ 
+-    // Pioneered: no platter is being held at startup.
++    // Pioneered: no platter is being held, or spinning free, at startup.
+     PioneerDDJ400.jogTouched = [false, false];
++    PioneerDDJ400.spinning = [false, false];
+ 
+     engine.softTakeover("[Channel1]", "rate", true);
+     engine.softTakeover("[Channel2]", "rate", true);
+@@ -607,6 +626,15 @@ PioneerDDJ400.jogTurn = function(channel, control, value, _status, group) {
+     const scratchAllowed = control === PioneerDDJ400.jogPlatterScratchCC && platterHeld;
+ 
+     if (scratchAllowed && engine.isScratching(deckNum)) {
++        PioneerDDJ400.lastScratchTick[channel] = Date.now();
++        engine.scratchTick(deckNum, newVal);
++        return;
++    }
++
++    // Pioneered: a platter let go mid-spin keeps driving the track, whichever
++    // rotation message it now sends -- see spinReleaseMs.
++    if (PioneerDDJ400.spinning[channel]) {
++        PioneerDDJ400.spinTicks[channel] += newVal;
+         engine.scratchTick(deckNum, newVal);
+         return;
+     }
+@@ -637,6 +665,12 @@ PioneerDDJ400.jogTouch = function(channel, _control, value) {
+     // would strand this flag at true and re-arm the phantom scratch.
+     PioneerDDJ400.jogTouched[channel] = value !== 0;
+ 
++    // Pioneered: a new touch catches a free-spinning platter. scratchEnable
++    // below takes over from the spin's scratch without a gap.
++    if (value !== 0) {
++        PioneerDDJ400.stopSpin(channel);
++    }
++
+     // skip while adjusting the loop points
+     if (PioneerDDJ400.loopAdjustIn[channel] || PioneerDDJ400.loopAdjustOut[channel]) {
+         return;
+@@ -644,11 +678,54 @@ PioneerDDJ400.jogTouch = function(channel, _control, value) {
+ 
+     if (value !== 0 && this.vinylMode) {
+         engine.scratchEnable(deckNum, 720, 33+1/3, this.alpha, this.beta);
++    } else if (engine.isScratching(deckNum) &&
++            Date.now() - PioneerDDJ400.lastScratchTick[channel] < PioneerDDJ400.spinReleaseMs) {
++        // Pioneered: let go while the platter is moving -- a backspin, or a
++        // forward throw. Keep scratching until it has spun down.
++        PioneerDDJ400.startSpin(channel);
+     } else {
+         engine.scratchDisable(deckNum);
+     }
+ };
+ 
++PioneerDDJ400.startSpin = function(channel) {
++    PioneerDDJ400.stopSpin(channel);
++    PioneerDDJ400.spinning[channel] = true;
++    PioneerDDJ400.spinTicks[channel] = 0;
++    PioneerDDJ400.spinTimer[channel] = engine.beginTimer(PioneerDDJ400.spinCheckMs, () => {
++        PioneerDDJ400.checkSpin(channel);
++    });
++};
++
++PioneerDDJ400.stopSpin = function(channel) {
++    PioneerDDJ400.spinning[channel] = false;
++    if (PioneerDDJ400.spinTimer[channel]) {
++        engine.stopTimer(PioneerDDJ400.spinTimer[channel]);
++        PioneerDDJ400.spinTimer[channel] = 0;
++    }
++};
++
++PioneerDDJ400.checkSpin = function(channel) {
++    const deckNum = channel + 1;
++    const group = "[Channel" + deckNum + "]";
++    const ticks = PioneerDDJ400.spinTicks[channel];
++    PioneerDDJ400.spinTicks[channel] = 0;
++
++    // Wheel speed as a multiple of normal playback speed; negative is backwards.
++    const wheelSpeed = ticks * 1000 / PioneerDDJ400.spinCheckMs / PioneerDDJ400.jogTicksPerSecond;
++    const playSpeed = engine.getValue(group, "play") ? engine.getValue(group, "rate_ratio") : 0;
++
++    if (!engine.isScratching(deckNum)) {
++        // Something else ended the scratch; nothing left to hand back.
++        PioneerDDJ400.stopSpin(channel);
++    } else if (ticks === 0 || (ticks > 0 && wheelSpeed <= playSpeed)) {
++        // Spun down: hand the deck back to the transport, ramping to playback
++        // speed from wherever the wheel left it.
++        PioneerDDJ400.stopSpin(channel);
++        engine.scratchDisable(deckNum);
++    }
++};
++
+ //
+ // Shift button
+ //

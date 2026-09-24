@@ -728,3 +728,42 @@
       but nothing in the Pioneered UI can reach it now.
     Touches `src/library/librarycontrol.{h,cpp}`,
     `src/library/rekordbox/rekordboxfeature.{h,cpp}`. Skin side: none.
+29. `hotcue-instant-play.patch` (added 2026-09-24, r37) — a hot cue pad pressed
+    on a paused deck starts playback from the cue and the deck keeps playing
+    when the pad is let go, as on a CDJ. Mixxx previewed instead (play only
+    while held, then jump back to the cue and stop on release), so a tap
+    left the deck paused. `CueControl::hotcueActivate()` routes a paused,
+    non-previewing press through `hotcueGotoAndPlay()` (hot cue) or
+    `hotcueGotoAndLoop()` (saved loop: jump to the loop start, engage it,
+    play). Playing decks, empty pads (set a cue) and presses during a
+    running preview are unchanged, and the preview is still reachable as
+    `hotcue_X_activate_preview`. Done in C++ rather than by rebinding the
+    pads in the mapping, for the reason given under
+    `browse-encoder-zoom.patch`: a stale user mapping would shadow it.
+    **One test moves with it.** `EngineSyncTest.QuantizeHotCueActivate`
+    previewed on a paused deck through `hotcue_1_activate`; it now previews
+    through `hotcue_1_activate_preview`, which runs the same code that
+    activate used to, and its assertions are unchanged. New tests:
+    `HotcueControlTest.CueActivateWhilePausedStartsPlayback` and
+    `SavedLoopActivateWhilePausedStartsLoop`. Touches
+    `src/engine/controls/cuecontrol.cpp`, `src/test/enginesynctest.cpp`,
+    `src/test/hotcuecontrol_test.cpp`.
+30. `jog-backspin.patch` (added 2026-09-24, r37) — backspins follow the wheel
+    after the hand lets go. `jog-nudge.patch` (16) scratches only for the
+    platter message while the touch sensor is held, and ends any scratch
+    still running when another rotation message arrives. A backspin trips
+    both: the hand leaves a platter that is still spinning, the sensor
+    releases, and the free-spinning wheel keeps sending rotation messages.
+    The first one killed the scratch and the rest became pitch-bend nudges:
+    forward playback dragged backwards through the 60 ms jog filter, which
+    is the "weird" backspin sound. `jogTouch()` now checks on release
+    whether the platter was still moving (a scratch tick within
+    `spinReleaseMs` = 30 ms). If it was, the deck stays in scratch mode and
+    every rotation message keeps driving it (`PioneerDDJ400.spinning`). A
+    25 ms check (`spinCheckMs`) ends the spin when the wheel stops, or when
+    it has slowed to the deck's playback speed going forwards. Then the
+    normal `scratchDisable()` ramp hands the deck back. A new touch catches
+    the spin. Lifting off a still platter releases at once, and a side-ring
+    nudge after the spin still bends. Touches
+    `res/controllers/Pioneer-DDJ-400-script.js` only, so it has the same
+    stale-user-mapping caveat as the rest of `jog-nudge.patch`.

@@ -1,0 +1,172 @@
+Description: Hot cue pads start playback on a paused deck, like a CDJ
+ hotcue_X_activate on a paused deck used to *preview* the cue: the deck
+ played only while the pad was held, then jumped back to the cue and stopped
+ when it was let go, so a tap left the deck paused. A CDJ starts playing from
+ the hot cue and keeps playing. CueControl::hotcueActivate() now does that
+ when the deck is paused and no preview is running: a hot cue goes through
+ hotcueGotoAndPlay() and a saved loop through hotcueGotoAndLoop() (jump to
+ the loop start, engage the loop, play). Pads on a playing deck, empty pads
+ (set a cue) and a pad pressed during a running preview are unchanged, and
+ the preview itself is still reachable as hotcue_X_activate_preview.
+ .
+ debian/rules runs mixxx-test, so the one test that previewed through
+ hotcue_X_activate (EngineSyncTest.QuantizeHotCueActivate, a paused deck)
+ now previews through hotcue_1_activate_preview, which runs the same code
+ path activate used to; its assertions are unchanged. New tests:
+ HotcueControlTest.CueActivateWhilePausedStartsPlayback and
+ SavedLoopActivateWhilePausedStartsLoop.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+diff --git a/src/engine/controls/cuecontrol.cpp b/src/engine/controls/cuecontrol.cpp
+--- a/src/engine/controls/cuecontrol.cpp
++++ b/src/engine/controls/cuecontrol.cpp
+@@ -1134,8 +1134,24 @@ void CueControl::hotcueActivate(HotcueControl* pControl, double value, HotcueSet
+                 default:
+                     DEBUG_ASSERT(!"Invalid CueType!");
+                 }
++            } else if (m_currentlyPreviewingIndex == Cue::kNoHotCue) {
++                // Pioneered: pressed during pause. A CDJ starts playing from
++                // the hot cue and keeps playing when the pad is let go; Mixxx
++                // previewed it instead (play while held, jump back and stop on
++                // release). A saved loop starts looping from its start. The
++                // preview is still available as hotcue_X_activate_preview.
++                switch (pCue->getType()) {
++                case mixxx::CueType::HotCue:
++                    hotcueGotoAndPlay(pControl, value);
++                    break;
++                case mixxx::CueType::Loop:
++                    hotcueGotoAndLoop(pControl, value);
++                    break;
++                default:
++                    DEBUG_ASSERT(!"Invalid CueType!");
++                }
+             } else {
+-                // pressed during pause or preview
++                // pressed during preview
+                 hotcueActivatePreview(pControl, value);
+             }
+         } else {
+diff --git a/src/test/enginesynctest.cpp b/src/test/enginesynctest.cpp
+--- a/src/test/enginesynctest.cpp
++++ b/src/test/enginesynctest.cpp
+@@ -2847,6 +2847,11 @@ TEST_F(EngineSyncTest, QuantizeHotCueActivate) {
+     m_pTrack1->trySetBeats(pBeats1);
+ 
+     auto pHotCue2Activate = std::make_unique<ControlProxy>(m_sGroup2, "hotcue_1_activate");
++    // Pioneered: hotcue_X_activate on a paused deck starts playback like a
++    // CDJ instead of previewing, so the previews below use the dedicated
++    // preview control, which runs the same code activate used to.
++    auto pHotCue2ActivatePreview = std::make_unique<ControlProxy>(
++            m_sGroup2, "hotcue_1_activate_preview");
+     mixxx::BeatsPointer pBeats2 = mixxx::Beats::fromConstTempo(
+             m_pTrack2->getSampleRate(), mixxx::audio::kStartFramePos, mixxx::Bpm(100));
+ 
+@@ -2864,13 +2869,13 @@ TEST_F(EngineSyncTest, QuantizeHotCueActivate) {
+ 
+     ControlObject::set(ConfigKey(m_sGroup2, "quantize"), 0.0);
+     // preview a hot cue without quantize
+-    pHotCue2Activate->set(1.0);
++    pHotCue2ActivatePreview->set(1.0);
+     ProcessBuffer();
+ 
+     // Expect that the track has advanced by one buffer starting from the hot cue at 0:00
+     EXPECT_DOUBLE_EQ(0.019349962207105064, ControlObject::get(ConfigKey(m_sGroup2, "beat_distance")));
+ 
+-    pHotCue2Activate->set(0.0);
++    pHotCue2ActivatePreview->set(0.0);
+     ProcessBuffer();
+ 
+     // Expect that the track was set back to 0:00
+@@ -2881,7 +2886,7 @@ TEST_F(EngineSyncTest, QuantizeHotCueActivate) {
+ 
+     ControlObject::set(ConfigKey(m_sGroup2, "quantize"), 1.0);
+     // preview a hot cue with quantize seeks back to 0:00 and adjust beat distance to match the first track
+-    pHotCue2Activate->set(1.0);
++    pHotCue2ActivatePreview->set(1.0);
+     ProcessBuffer();
+ 
+     // Beat_distance is the distance to the previous beat which has already passed.
+@@ -2892,7 +2897,7 @@ TEST_F(EngineSyncTest, QuantizeHotCueActivate) {
+             (1 - ControlObject::get(ConfigKey(m_sGroup2, "beat_distance"))),
+             1e-15);
+ 
+-    pHotCue2Activate->set(0.0);
++    pHotCue2ActivatePreview->set(0.0);
+     ProcessBuffer();
+ 
+     // Expect that the track is back to 0:00
+diff --git a/src/test/hotcuecontrol_test.cpp b/src/test/hotcuecontrol_test.cpp
+--- a/src/test/hotcuecontrol_test.cpp
++++ b/src/test/hotcuecontrol_test.cpp
+@@ -1553,3 +1553,70 @@ TEST_F(HotcueControlTest, LoadTrackDoesNotRestoreLoop) {
+                          .isValid());
+     EXPECT_FALSE(m_pLoopEnabled->toBool());
+ }
++
++TEST_F(HotcueControlTest, CueActivateWhilePausedStartsPlayback) {
++    // Pioneered: like a CDJ, a hot cue pad pressed on a paused deck jumps to
++    // the cue and plays from there, and the deck keeps playing when the pad
++    // is let go. (Mixxx used to preview: play only while held, then jump back
++    // to the cue and stop.)
++    TrackPointer pTrack = loadTestTrackWithBpm(120.0);
++
++    const auto cuePosition = mixxx::audio::FramePos(8 * getBeatLengthFrames(pTrack));
++    setCurrentFramePosition(cuePosition);
++    ProcessBuffer();
++    m_pHotcue1SetCue->set(1);
++    m_pHotcue1SetCue->set(0);
++    EXPECT_FRAMEPOS_EQ_CONTROL(cuePosition, m_pHotcue1Position);
++
++    setCurrentFramePosition(mixxx::audio::kStartFramePos);
++    ProcessBuffer();
++    EXPECT_FALSE(m_pPlay->toBool());
++
++    m_pHotcue1Activate->set(1);
++    ProcessBuffer();
++    EXPECT_TRUE(m_pPlay->toBool());
++    EXPECT_LE(cuePosition, currentFramePosition());
++
++    m_pHotcue1Activate->set(0);
++    ProcessBuffer();
++    EXPECT_TRUE(m_pPlay->toBool());
++    EXPECT_LT(cuePosition, currentFramePosition());
++    EXPECT_DOUBLE_EQ(0.0, m_pLoopEnabled->get());
++}
++
++TEST_F(HotcueControlTest, SavedLoopActivateWhilePausedStartsLoop) {
++    // Pioneered: a saved loop pad pressed on a paused deck jumps to the loop
++    // start and plays the loop, and it keeps playing when the pad is let go.
++    TrackPointer pTrack = loadTestTrackWithBpm(120.0);
++
++    m_pBeatloopSize->set(4);
++    const mixxx::audio::FrameDiff_t beatLengthFrames = getBeatLengthFrames(pTrack);
++    const mixxx::audio::FrameDiff_t loopLengthFrames = m_pBeatloopSize->get() * beatLengthFrames;
++    const auto loopStartPosition = mixxx::audio::FramePos(8 * beatLengthFrames);
++    const auto loopEndPosition = loopStartPosition + loopLengthFrames;
++
++    // Save a 4-beat loop at the 8th beat to hotcue slot 1, then leave it
++    setCurrentFramePosition(loopStartPosition);
++    ProcessBuffer();
++    m_pBeatloopActivate->set(1);
++    m_pBeatloopActivate->set(0);
++    m_pHotcue1Activate->set(1);
++    m_pHotcue1Activate->set(0);
++    EXPECT_FRAMEPOS_EQ_CONTROL(loopStartPosition, m_pHotcue1Position);
++    EXPECT_FRAMEPOS_EQ_CONTROL(loopEndPosition, m_pHotcue1EndPosition);
++
++    m_pLoopEnabled->set(0);
++    setCurrentFramePosition(mixxx::audio::kStartFramePos);
++    ProcessBuffer();
++    EXPECT_FALSE(m_pPlay->toBool());
++    EXPECT_DOUBLE_EQ(0.0, m_pLoopEnabled->get());
++
++    m_pHotcue1Activate->set(1);
++    m_pHotcue1Activate->set(0);
++    ProcessBuffer();
++    EXPECT_TRUE(m_pPlay->toBool());
++    EXPECT_DOUBLE_EQ(1.0, m_pLoopEnabled->get());
++    EXPECT_DOUBLE_EQ(static_cast<double>(HotcueControl::Status::Active), m_pHotcue1Status->get());
++    EXPECT_LE(loopStartPosition, currentFramePosition());
++    EXPECT_GT(loopEndPosition, currentFramePosition());
++}

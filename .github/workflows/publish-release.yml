@@ -97,6 +97,8 @@ jobs:
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/bpm-readout.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/loop-behavior.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/usb-auto-load.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/hotcue-instant-play.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/jog-backspin.patch"
           # Version the build after the release tag (v2.5.0-r20 -> +usbbrowse.r20.1)
           # so deb versions keep increasing with the release series.
           SUFFIX="${GITHUB_REF_NAME##*-}"

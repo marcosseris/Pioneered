@@ -52,6 +52,8 @@ jobs:
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/bpm-readout.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/loop-behavior.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/usb-auto-load.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/hotcue-instant-play.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/jog-backspin.patch"
           DEBEMAIL=pioneered-build@localhost DEBFULLNAME="Pioneered CI" \
             dch --local "+usbbrowse.r${GITHUB_RUN_NUMBER}." "Pioneered USB browse/eject patch build ${GITHUB_RUN_NUMBER}"
 
