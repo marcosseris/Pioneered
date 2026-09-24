@@ -767,3 +767,107 @@
     nudge after the spin still bends. Touches
     `res/controllers/Pioneer-DDJ-400-script.js` only, so it has the same
     stale-user-mapping caveat as the rest of `jog-nudge.patch`.
+31. `load-first-cue.patch` (added 2026-09-24, r38) — a track with cues loads
+    at the first of them, like a CDJ. Mixxx's default `[Controls] CueRecall`
+    is `SeekOnLoadMode::IntroStart`, and a rekordbox track has no intro cue
+    until Mixxx has analysed it, so every track loaded at 0:00 even though
+    `rekordboxfeature.cpp` already makes the first memory cue the main cue.
+    `CueControl::firstCuePosition()` returns the earliest of the main cue
+    (read from the `cue_point` CO, so it is quantized like the MainCue mode,
+    and only when the track really has a MainCue — a track without one still
+    shows `cue_point` 0) and the hot cues of type HotCue; saved loops do not
+    count. `trackLoaded()` seeks there in every mode except `Beginning`
+    (which still means 0:00, for the vinyl-control needle drop), and falls
+    back to the configured mode when there is no cue. `trackAnalyzed()`
+    applies the same rule to a deck that has not moved since the load: the
+    silence analyser gives a cueless track a main cue at its first sound, so
+    it moves there, and a track that loaded at its first cue stays on it
+    rather than following the intro start the analyser adds. No existing
+    test moves: the tests that load a track carrying cues use the MainCue
+    mode with only a main cue, where the rule picks the same position. New
+    tests: `CueControlTest.SeekOnLoadFirstCue` (a hot cue ahead of the main
+    cue wins, an earlier saved loop is ignored, analysis does not pull the
+    deck to the intro start) and `SeekOnLoadMainCueWithoutHotcues`. Touches
+    `src/engine/controls/cuecontrol.{h,cpp}`, `src/test/cuecontrol_test.cpp`.
+32. `played-tracks-greyed.patch` (added 2026-09-24, r38) — tracks played for
+    30 s are drawn in the played-track colour in every list until their
+    stick is ejected or pulled, like the history on a Pioneer player. New
+    `XdjPlayedTracks` singleton (`src/library/xdjplayedtracks.{h,cpp}`, added
+    to `CMakeLists.txt`): a 1 s timer adds the measured elapsed time to each
+    `[ChannelN]` deck whose `play` is on, resets it when `PlayerInfo` reports
+    a different track on the deck, and adds the track's location to an
+    in-memory set at `kPlayedThresholdMs` (30 s). Decks that do not exist
+    yet are picked up on a later tick. `BaseTrackTableModel::data()` checks
+    the row's `location` in its ForegroundRole — after the missing-file
+    colour, before Mixxx's own played flag — and returns
+    `m_trackPlayedColor` (`WTrackTableView::trackPlayedColor`, `#555555`
+    unless the skin sets it); the rekordbox table stores the path
+    `resolveUnicodePath()` resolved, which is the loaded Track's location,
+    so the two match. The model repaints its ForegroundRole when the set
+    changes (a track crossing 30 s, a stick going away — rare). LibraryControl
+    calls `forgetUnder(mountPath)` when an eject's umount succeeds and when
+    `slotPollUsbMounts()` sees a slot go away (a stick pulled without an
+    eject). Nothing is written to the library and Mixxx's played flag is
+    untouched. Touches `src/library/basetracktablemodel.cpp`,
+    `src/library/librarycontrol.cpp`, `CMakeLists.txt`, plus the two new
+    files.
+33. `color-fx.patch` (added 2026-09-24, r38) — Color FX buttons for the
+    FILTER knobs. The DDJ-400's per-channel FILTER knob drives
+    `[QuickEffectRack1_[ChannelN]],super1`; new `ColorFxControl`
+    (`src/effects/colorfxcontrol.{h,cpp}`, added to `CMakeLists.txt`, owned by
+    `EffectsManager`) picks which chain that knob runs, for every deck at
+    once. Four options, each silent at the centre:
+    * **SPACE** — Reverb (decay 0.7), then Filter.
+    * **DUB ECHO** — Echo (0.5 beat, quantized, feedback 0.75, so the repeats
+      ring on after the knob is back at the centre), then Filter.
+    * **NOISE** — White Noise, then Filter.
+    * **FILTER** — Filter alone, the previous behaviour and the default.
+    The effect's amount (`send_amount`, or `dry_wet` for noise) is linked
+    `LINKED_LEFT_RIGHT`: 0 at the centre, full at either end. The filter keeps
+    its manifest links (low-pass on the left half, high-pass on the right).
+    The chains are built in C++ from each effect's manifest defaults, via
+    `EffectPreset(manifest).toXml()` edited in the DOM and parsed back into an
+    `EffectChainPreset` — the preset classes are read-only — so they never
+    depend on the QuickEffect preset list in the preferences. Controls
+    `[Pioneered],color_fx_space` / `_dub_echo` / `_noise` / `_filter` read 1
+    while selected; a value-change request of 1 selects, one of 0 (a tap on
+    the lit button) is refused, so two-state skin buttons act as radio
+    buttons. Loading a QuickEffect preset resets the super knob to the
+    preset's value, so `applyToChain()` restores the super knob afterwards:
+    the hardware knob has not moved. The choice is saved as
+    `[Pioneered] ColorFx` in `mixxx.cfg` and flushed at once (POWER OFF gives
+    no clean exit). `EffectsManager::setup()` creates it after
+    `readEffectsXml()` and applies it, so it wins over the chain effects.xml
+    restored; `addDeck()` applies it to decks added later. `loaded_chain_preset`
+    reads -1 for these chains (they are not in the preset list); nothing in
+    the skin shows it.
+    **White Noise is centred on zero.** `WhiteNoiseEffect` drew its noise
+    from 0..1 — white noise on a DC offset of half full scale, which the low-
+    pass behind it in NOISE turns into a large DC step into the amplifier. It
+    now draws from -0.5..0.5, the same peak-to-peak level. Touches
+    `src/effects/effectsmanager.{h,cpp}`,
+    `src/effects/backends/builtin/whitenoiseeffect.cpp`, `CMakeLists.txt`,
+    plus the two new files. Skin side: `effects.xml` (COLOR FX header and a
+    2x2 grid), new `templates/color_fx_button.xml`, `style.qss`
+    (`#ColorFxButton`, lit in the BeatFX blue).
+34. `beat-fx-single.patch` (added 2026-09-24, r38) — one Beat FX, working from
+    the first press. The mapping's BEAT FX handlers all acted on Effect Unit
+    1's *focused* effect, and `focused_effect` starts (and is remembered) at
+    0, meaning none, so ON/OFF toggled `[EffectRack1_EffectUnit1_Effect0]`
+    until BEAT < or > had moved the focus onto a real slot. LEVEL/DEPTH had
+    soft takeover on the unit's `mix`, which Mixxx persists, so the knob did
+    nothing until it had crossed the stored value. `Pioneer-DDJ-400-script.js`
+    now drives `PioneerDDJ400.beatFxGroup` (Effect 1) only: BEAT < / > send
+    `prev_effect` / `next_effect` to it (the same as SHIFT + FX SELECT and FX
+    SELECT), ON/OFF toggles it and its LED follows it, LEVEL/DEPTH writes
+    `mix` directly, SHIFT + LEVEL/DEPTH writes its `meta` (soft takeover kept
+    there, so letting go of SHIFT does not jump the parameter). `init()`
+    switches Effects 2 and 3 off — the skin no longer shows them, so one left
+    on could never be switched off — and sets the focus to 1.
+    `StandardEffectChain`'s constructor also sets `focused_effect` to 1 when it
+    comes up below 1, which covers a stale copy of the mapping in the user
+    mapping folder (see `browse-encoder-zoom.patch`); the soft-takeover and
+    BEAT < / > changes are script-only and carry that caveat. Touches
+    `res/controllers/Pioneer-DDJ-400-script.js`,
+    `src/effects/chains/standardeffectchain.cpp`. Skin side: `effects.xml`
+    shows only Effect 1.

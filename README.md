@@ -18,7 +18,12 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
 * Tabbed view: Overview, Browse and Samples — inspired by the Pioneer XDJ interface
 * Fully scalable, minimum resolution 480x420; tiny resource footprint
 * Small waveform overviews at the bottom, keylock and quantize buttons
-* BeatFX section with three effect units and level meters
+* BeatFX section with one effect, like Pioneer gear, driven by the DDJ-400's
+  BEAT FX controls (BEAT ◀ / ▶ pick the effect, ON/OFF works from the first
+  press, LEVEL/DEPTH takes effect wherever the knob is)
+* **Color FX buttons** under the Beat FX: **SPACE**, **DUB ECHO**, **NOISE**
+  and **FILTER** pick what both FILTER knobs do, as on a Pioneer mixer
+  (quiet at the centre, low-pass sweep to the left, high-pass to the right)
 * Touch-optimized Browse tab: two-pane playlist/track view, one-tap
   **USB A / USB B** source buttons, and full-width deck overviews along the
   bottom (loading is the DDJ-400's own LOAD 1 / LOAD 2 buttons — no duplicate
@@ -55,6 +60,8 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   * **Key traffic light**: the Key cell lights up green when the track is
     Camelot-compatible with the master deck (the deck that started playing
     most recently); keys are always shown as note names (Am, F♯m, …)
+  * **Played tracks are greyed out**: a track that has played on a deck for
+    30 s shows dimmed in every list until its stick is ejected or pulled
 * **Waveforms & playback like Pioneer gear**
   * Rekordbox-style **red bar markers** on the beatgrid (first beat of every
     bar), with the grid correctly anchored on rekordbox's "1"
@@ -92,6 +99,8 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   * **Hot cue pads play like a CDJ**: a pad pressed on a paused deck starts
     playing from the cue and keeps playing after you let go (a saved loop pad
     starts its loop)
+  * **Tracks load at their first cue**: a track with rekordbox memory cues or
+    hot cues loads at the earliest of them instead of at 0:00
 * **Reliability**
   * Hardened rekordbox database parser: corrupt/truncated `EXPORT.PDB` files
     (e.g. from pulling a stick mid-write) can no longer crash Mixxx

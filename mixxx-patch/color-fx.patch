@@ -1,0 +1,439 @@
+Description: Color FX buttons pick what the FILTER knobs do
+ Four Pioneer SOUND COLOR FX for both decks' FILTER knobs, which drive the
+ decks' QuickEffect chains (super1): SPACE (reverb), DUB ECHO (half-beat
+ echo with long feedback), NOISE (white noise) and FILTER (the filter alone,
+ as before). Each is silent with the knob at the centre, the effect rising
+ towards either end, over the Pioneered Filter's low-pass (left) / high-pass
+ (right) sweep. New ColorFxControl (src/effects/colorfxcontrol.{h,cpp}),
+ owned by EffectsManager, builds the chains itself from the effects'
+ manifest defaults -- effect first, filter second, the effect's amount
+ linked LINKED_LEFT_RIGHT -- so they do not depend on the QuickEffect preset
+ list in the preferences. Controls [Pioneered],color_fx_space / _dub_echo /
+ _noise / _filter read 1 while selected; a request for 1 selects, a request
+ for 0 is refused, so plain two-state skin buttons act as radio buttons.
+ Switching keeps the super knob where the hardware knob is. The choice is
+ written to mixxx.cfg ([Pioneered] ColorFx) and flushed at once, and is
+ applied after effects.xml is read at startup and to decks added later.
+ .
+ White Noise is now centred on zero (-0.5..0.5 instead of 0..1, same
+ peak-to-peak level). The old noise rode on a DC offset of half full scale,
+ which a low-pass after it turns into a large DC step into the amplifier.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 76a3aae..3527da3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -814,6 +814,7 @@ add_library(mixxx-lib STATIC EXCLUDE_FROM_ALL
+   src/effects/chains/pergroupeffectchain.cpp
+   src/effects/chains/quickeffectchain.cpp
+   src/effects/chains/standardeffectchain.cpp
++  src/effects/colorfxcontrol.cpp
+   src/effects/effectbuttonparameterslot.cpp
+   src/effects/effectchain.cpp
+   src/effects/effectchainmixmode.cpp
+diff --git a/src/effects/backends/builtin/whitenoiseeffect.cpp b/src/effects/backends/builtin/whitenoiseeffect.cpp
+index 762f419..adcf206 100644
+--- a/src/effects/backends/builtin/whitenoiseeffect.cpp
++++ b/src/effects/backends/builtin/whitenoiseeffect.cpp
+@@ -56,7 +56,11 @@ void WhiteNoiseEffect::processChannel(
+     RampingValue<CSAMPLE_GAIN> drywet_ramping_value(
+             drywet, gs.previous_drywet, engineParameters.framesPerBuffer());
+ 
+-    std::uniform_real_distribution<> r_distributor(0.0, 1.0);
++    // Pioneered: centred on zero. Drawn from 0..1 this was white noise
++    // riding on a DC offset of half full scale, which a low-pass filter after
++    // it (the NOISE Color FX) turns into a large DC step into the amplifier.
++    // Same peak-to-peak level, so the noise sounds as loud as before.
++    std::uniform_real_distribution<> r_distributor(-0.5, 0.5);
+ 
+     for (SINT i = 0; i < engineParameters.samplesPerBuffer(); i++) {
+         CSAMPLE_GAIN drywet_ramped = drywet_ramping_value.getNth(i);
+diff --git a/src/effects/colorfxcontrol.cpp b/src/effects/colorfxcontrol.cpp
+new file mode 100644
+index 0000000..40e06b3
+--- /dev/null
++++ b/src/effects/colorfxcontrol.cpp
+@@ -0,0 +1,237 @@
++#include "effects/colorfxcontrol.h"
++
++#include <QDomDocument>
++#include <QtDebug>
++
++#include "control/controlobject.h"
++#include "effects/backends/builtin/echoeffect.h"
++#include "effects/backends/builtin/filtereffect.h"
++#include "effects/backends/builtin/reverbeffect.h"
++#include "effects/backends/builtin/whitenoiseeffect.h"
++#include "effects/backends/effectmanifest.h"
++#include "effects/backends/effectsbackendmanager.h"
++#include "effects/chains/quickeffectchain.h"
++#include "effects/effectsmanager.h"
++#include "effects/presets/effectchainpreset.h"
++#include "effects/presets/effectpreset.h"
++#include "effects/presets/effectxmlelements.h"
++#include "moc_colorfxcontrol.cpp"
++#include "util/assert.h"
++
++namespace {
++
++const QString kGroup = QStringLiteral("[Pioneered]");
++const ConfigKey kConfigKey(kGroup, QStringLiteral("ColorFx"));
++const QString kDefaultOption = QStringLiteral("filter");
++
++// The knob position that leaves the sound untouched.
++constexpr double kCentre = 0.5;
++
++const QString kLinkedLeftRight = QStringLiteral("LINKED_LEFT_RIGHT");
++
++QDomElement childElement(const QDomElement& parent, const QString& tagName) {
++    return parent.firstChildElement(tagName);
++}
++
++void setChildText(QDomDocument* pDoc,
++        QDomElement element,
++        const QString& tagName,
++        const QString& text) {
++    QDomElement child = childElement(element, tagName);
++    if (child.isNull()) {
++        child = pDoc->createElement(tagName);
++        element.appendChild(child);
++    }
++    while (child.hasChildNodes()) {
++        child.removeChild(child.firstChild());
++    }
++    child.appendChild(pDoc->createTextNode(text));
++}
++
++/// Sets one parameter of an <Effect> element: its value (in the parameter's
++/// own units) and, if given, how the super knob drives it.
++void setParameter(QDomDocument* pDoc,
++        const QDomElement& effectElement,
++        const QString& parameterId,
++        double value,
++        const QString& linkType = QString()) {
++    const QDomElement parameters =
++            childElement(effectElement, EffectXml::kParametersRoot);
++    for (QDomElement parameter = parameters.firstChildElement(EffectXml::kParameter);
++            !parameter.isNull();
++            parameter = parameter.nextSiblingElement(EffectXml::kParameter)) {
++        if (childElement(parameter, EffectXml::kParameterId).text() != parameterId) {
++            continue;
++        }
++        setChildText(pDoc, parameter, EffectXml::kParameterValue, QString::number(value));
++        if (!linkType.isEmpty()) {
++            setChildText(pDoc, parameter, EffectXml::kParameterLinkType, linkType);
++        }
++        return;
++    }
++    qWarning() << "Color FX: effect has no parameter" << parameterId;
++}
++
++} // anonymous namespace
++
++ColorFxControl::ColorFxControl(UserSettingsPointer pConfig, EffectsManager* pEffectsManager)
++        : m_pConfig(pConfig),
++          m_pEffectsManager(pEffectsManager),
++          m_selected(-1) {
++    // Pioneer order: SPACE, DUB ECHO, NOISE, FILTER.
++    const struct {
++        const char* id;
++        const char* name;
++        QString effectId;
++    } kOptions[] = {
++            {"space", "Space", ReverbEffect::getId()},
++            {"dub_echo", "Dub Echo", EchoEffect::getId()},
++            {"noise", "Noise", WhiteNoiseEffect::getId()},
++            {"filter", "Filter", QString()},
++    };
++    for (const auto& option : kOptions) {
++        Option entry;
++        entry.id = QString::fromLatin1(option.id);
++        entry.name = QString::fromLatin1(option.name);
++        entry.pPreset = buildPreset(entry.name, option.effectId);
++        entry.pControl = std::make_unique<ControlObject>(
++                ConfigKey(kGroup, QStringLiteral("color_fx_") + entry.id));
++        const int index = static_cast<int>(m_options.size());
++        entry.pControl->connectValueChangeRequest(this, [this, index](double value) {
++            if (value > 0) {
++                select(index);
++            }
++            // A request for 0 is a tap on the button that is already lit:
++            // one option is always selected, so it stays lit.
++        });
++        m_options.push_back(std::move(entry));
++    }
++
++    const QString saved = m_pConfig->getValue(kConfigKey, kDefaultOption);
++    for (int i = 0; i < static_cast<int>(m_options.size()); ++i) {
++        if (m_options[i].id == saved) {
++            m_selected = i;
++        }
++        if (m_options[i].id == kDefaultOption && m_selected < 0) {
++            m_selected = i;
++        }
++    }
++    for (int i = 0; i < static_cast<int>(m_options.size()); ++i) {
++        m_options[i].pControl->setAndConfirm(i == m_selected ? 1.0 : 0.0);
++    }
++}
++
++ColorFxControl::~ColorFxControl() = default;
++
++EffectChainPresetPointer ColorFxControl::buildPreset(
++        const QString& name, const QString& effectId) const {
++    const EffectsBackendManagerPointer pBackendManager =
++            m_pEffectsManager->getBackendManager();
++    const EffectManifestPointer pFilterManifest = pBackendManager->getManifest(
++            FilterEffect::getId(), EffectBackendType::BuiltIn);
++    VERIFY_OR_DEBUG_ASSERT(pFilterManifest) {
++        return EffectChainPresetPointer();
++    }
++
++    // Start from each effect's manifest defaults (so every parameter is
++    // present and in manifest order, which is the order the parameter slots
++    // are filled in), then change what the Color FX needs. The filter's own
++    // links -- low-pass on the left half, high-pass on the right -- are
++    // already the Pioneer sweep and are left alone.
++    QDomDocument doc;
++    QDomElement chain = EffectChainPreset(
++            EffectPresetPointer::create(pFilterManifest))
++                                .toXml(&doc);
++    setChildText(&doc, chain, EffectXml::kChainName, name);
++    setChildText(&doc, chain, EffectXml::kChainSuperParameter, QString::number(kCentre));
++    QDomElement effects = childElement(chain, EffectXml::kEffectsRoot);
++    QDomElement filter = childElement(effects, EffectXml::kEffect);
++    setChildText(&doc, filter, EffectXml::kEffectMetaParameter, QString::number(kCentre));
++
++    if (!effectId.isEmpty()) {
++        const EffectManifestPointer pManifest =
++                pBackendManager->getManifest(effectId, EffectBackendType::BuiltIn);
++        VERIFY_OR_DEBUG_ASSERT(pManifest) {
++            return EffectChainPresetPointer();
++        }
++        QDomElement effect = EffectPreset(pManifest).toXml(&doc);
++        setChildText(&doc, effect, EffectXml::kEffectMetaParameter, QString::number(kCentre));
++        // The effect's amount is silent at the centre and full at either end,
++        // so the knob adds it the same way in both directions while the
++        // filter behind it decides which part of the spectrum is heard.
++        if (effectId == ReverbEffect::getId()) {
++            setParameter(&doc, effect, QStringLiteral("send_amount"), 0.0, kLinkedLeftRight);
++            // A longer room than the default, as SPACE is.
++            setParameter(&doc, effect, QStringLiteral("decay"), 0.7);
++        } else if (effectId == EchoEffect::getId()) {
++            setParameter(&doc, effect, QStringLiteral("send_amount"), 0.0, kLinkedLeftRight);
++            // Half-beat repeats, quantized (the default), that ring on after
++            // the knob is back at the centre -- the "dub" in DUB ECHO.
++            setParameter(&doc, effect, QStringLiteral("delay_time"), 0.5);
++            setParameter(&doc, effect, QStringLiteral("feedback_amount"), 0.75);
++        } else if (effectId == WhiteNoiseEffect::getId()) {
++            setParameter(&doc, effect, QStringLiteral("dry_wet"), 0.0, kLinkedLeftRight);
++        }
++        // Effect first, filter second: the filter shapes the effect as well.
++        effects.insertBefore(effect, filter);
++    }
++    return EffectChainPresetPointer::create(chain);
++}
++
++void ColorFxControl::select(int optionIndex) {
++    if (optionIndex < 0 || optionIndex >= static_cast<int>(m_options.size())) {
++        return;
++    }
++    const bool changed = optionIndex != m_selected;
++    m_selected = optionIndex;
++    for (int i = 0; i < static_cast<int>(m_options.size()); ++i) {
++        m_options[i].pControl->setAndConfirm(i == m_selected ? 1.0 : 0.0);
++    }
++    if (!changed) {
++        return;
++    }
++    applyToAllDecks();
++    m_pConfig->setValue(kConfigKey, m_options[m_selected].id);
++    // Flush now: POWER OFF gives Mixxx no clean exit to save on.
++    if (!m_pConfig->save()) {
++        qWarning() << "Color FX: could not write the selection to"
++                   << m_pConfig->getSettingsPath();
++    }
++}
++
++void ColorFxControl::applyToAllDecks() {
++    for (int deck = 1;; ++deck) {
++        const QString group = QStringLiteral("[Channel%1]").arg(deck);
++        const QuickEffectChainPointer pChain =
++                m_pEffectsManager->getQuickEffectChain(group);
++        if (!pChain) {
++            break;
++        }
++        applyToChain(pChain);
++    }
++}
++
++void ColorFxControl::applyToDeck(const QString& deckGroup) {
++    const QuickEffectChainPointer pChain =
++            m_pEffectsManager->getQuickEffectChain(deckGroup);
++    if (pChain) {
++        applyToChain(pChain);
++    }
++}
++
++void ColorFxControl::applyToChain(const QuickEffectChainPointer& pChain) {
++    if (m_selected < 0) {
++        return;
++    }
++    const EffectChainPresetPointer& pPreset = m_options[m_selected].pPreset;
++    if (!pPreset) {
++        return;
++    }
++    // Loading a QuickEffect preset puts the super knob at the preset's value
++    // (the centre). The FILTER knob on the controller has not moved, so put
++    // the super knob back where the knob is; the new effect then comes in at
++    // the same setting instead of the knob going dead until it is turned.
++    const double superKnob = pChain->getSuperParameter();
++    pChain->loadChainPreset(pPreset);
++    pChain->setSuperParameter(superKnob, true);
++}
+diff --git a/src/effects/colorfxcontrol.h b/src/effects/colorfxcontrol.h
+new file mode 100644
+index 0000000..26e1df0
+--- /dev/null
++++ b/src/effects/colorfxcontrol.h
+@@ -0,0 +1,65 @@
++#pragma once
++
++#include <QObject>
++#include <QString>
++#include <memory>
++#include <vector>
++
++#include "effects/defs.h"
++#include "preferences/usersettings.h"
++
++class ControlObject;
++class EffectsManager;
++
++/// Pioneered: the Color FX buttons. The DDJ-400's FILTER knob on each channel
++/// drives that deck's QuickEffect chain ([QuickEffectRack1_[ChannelN]],
++/// super1); this picks what the knob does, for both decks at once, the way
++/// the SOUND COLOR FX buttons on a Pioneer mixer do. Every option is quiet
++/// with the knob at the centre and sweeps a filter towards either end:
++///
++///   SPACE     reverb, rising towards both ends, through the filter
++///   DUB ECHO  echo, rising towards both ends, through the filter
++///   NOISE     white noise, rising towards both ends, through the filter
++///   FILTER    the filter alone (what the knob did before)
++///
++/// The chains are built here from the effects' own defaults rather than taken
++/// from the QuickEffect preset list, so they do not depend on what is in the
++/// preferences, and cannot be renamed, reordered or deleted from under the
++/// buttons.
++///
++/// Controls, one per option: [Pioneered],color_fx_space / color_fx_dub_echo /
++/// color_fx_noise / color_fx_filter. Each reads 1 while its option is the
++/// selected one; setting it to 1 selects it, and setting the selected one to
++/// 0 is refused, so four plain two-state skin buttons behave as radio buttons.
++/// The choice is saved to mixxx.cfg ([Pioneered] ColorFx) at once, since the
++/// unit is usually switched off without a clean exit.
++class ColorFxControl : public QObject {
++    Q_OBJECT
++  public:
++    ColorFxControl(UserSettingsPointer pConfig, EffectsManager* pEffectsManager);
++    ~ColorFxControl() override;
++
++    /// Load the selected option into every deck's QuickEffect chain.
++    void applyToAllDecks();
++    /// Load the selected option into one deck's QuickEffect chain (a deck
++    /// added after startup).
++    void applyToDeck(const QString& deckGroup);
++
++  private:
++    struct Option {
++        QString id; // saved in mixxx.cfg and part of the control name
++        QString name; // the chain preset name
++        std::unique_ptr<ControlObject> pControl;
++        EffectChainPresetPointer pPreset;
++    };
++
++    void select(int optionIndex);
++    void applyToChain(const QuickEffectChainPointer& pChain);
++    EffectChainPresetPointer buildPreset(const QString& name,
++            const QString& effectId) const;
++
++    UserSettingsPointer m_pConfig;
++    EffectsManager* m_pEffectsManager;
++    std::vector<Option> m_options;
++    int m_selected;
++};
+diff --git a/src/effects/effectsmanager.cpp b/src/effects/effectsmanager.cpp
+index 9db9362..c5c883a 100644
+--- a/src/effects/effectsmanager.cpp
++++ b/src/effects/effectsmanager.cpp
+@@ -7,6 +7,7 @@
+ #include "effects/chains/outputeffectchain.h"
+ #include "effects/chains/quickeffectchain.h"
+ #include "effects/chains/standardeffectchain.h"
++#include "effects/colorfxcontrol.h"
+ #include "effects/effectslot.h"
+ #include "effects/effectsmessenger.h"
+ #include "effects/presets/effectchainpreset.h"
+@@ -55,6 +56,8 @@ EffectsManager::~EffectsManager() {
+ 
+     saveEffectsXml();
+ 
++    m_pColorFxControl.reset();
++
+     // The EffectChains must be deleted before the EffectsBackends in case
+     // there is an LV2 effect currently loaded.
+     // ~LV2GroupState calls lilv_instance_free, which will segfault if called
+@@ -80,6 +83,11 @@ void EffectsManager::setup() {
+     // readEffectsXml() is running is also initialized.
+     m_initializedFromEffectsXml = true;
+     readEffectsXml();
++
++    // Pioneered: the FILTER knobs do what the Color FX buttons last picked,
++    // not whatever QuickEffect chain effects.xml restored.
++    m_pColorFxControl = std::make_unique<ColorFxControl>(m_pConfig, this);
++    m_pColorFxControl->applyToAllDecks();
+ }
+ 
+ void EffectsManager::registerInputChannel(const ChannelHandleAndGroup& handle_group) {
+@@ -143,6 +151,9 @@ void EffectsManager::addDeck(const ChannelHandleAndGroup& deckHandleGroup) {
+     // previous state.
+     if (m_initializedFromEffectsXml) {
+         readEffectsXmlSingleDeck(deckHandleGroup.m_name);
++        if (m_pColorFxControl) {
++            m_pColorFxControl->applyToDeck(deckHandleGroup.m_name);
++        }
+     }
+ }
+ 
+diff --git a/src/effects/effectsmanager.h b/src/effects/effectsmanager.h
+index f2b579e..dac81f5 100644
+--- a/src/effects/effectsmanager.h
++++ b/src/effects/effectsmanager.h
+@@ -3,6 +3,7 @@
+ #include <QHash>
+ #include <QList>
+ #include <QSet>
++#include <memory>
+ 
+ #include "control/controlpotmeter.h"
+ #include "effects/backends/effectsbackendmanager.h"
+@@ -12,6 +13,7 @@
+ #include "util/class.h"
+ 
+ class EngineEffectsManager;
++class ColorFxControl;
+ 
+ /// EffectsManager initializes and shuts down the effects system. It creates and
+ /// destroys a fixed set of StandardEffectChains on Mixxx startup/shutdown
+@@ -120,5 +122,9 @@ class EffectsManager {
+     // previous state read from effects.xml
+     bool m_initializedFromEffectsXml;
+ 
++    // Pioneered: the Color FX buttons, which pick what the FILTER knobs do.
++    // Created by setup(), once the decks' QuickEffect chains exist.
++    std::unique_ptr<ColorFxControl> m_pColorFxControl;
++
+     DISALLOW_COPY_AND_ASSIGN(EffectsManager);
+ };

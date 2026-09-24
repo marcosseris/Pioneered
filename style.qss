@@ -255,6 +255,41 @@ WPushButton:pressed {
   border: 1px solid #2d85cd;
 }
 
+/* Color FX: four radio buttons picking what both FILTER knobs do. The lit
+   one wears the BeatFX blue (the same #2d85cd as an active effect), the
+   others the resting button face. */
+#ColorFx_Grid {
+  padding: 2px;
+}
+
+#ColorFxButton {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #20202a, stop:1 #16161c);
+  border: 1px solid #3c3c46;
+  border-radius: 4px;
+  color: #8f8f99;
+  font-size: 11px;
+  font-weight: bold;
+  margin: 2px;
+  text-transform: uppercase;
+}
+
+#ColorFxButton[value="1"] {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #3190e0, stop:1 #2877b8);
+  border: 1px solid #2d85cd;
+  color: white;
+}
+
+/* Only the unlit buttons need a touch-down face: a tap on the lit one
+   changes nothing. */
+#ColorFxButton[value="0"]:pressed {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #2a2a34, stop:1 #202028);
+  border: 1px solid #6a6a76;
+  color: white;
+}
+
 /************************************************************************/
 /*     Effects                                                          */
 /************************************************************************/

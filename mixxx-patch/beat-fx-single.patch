@@ -1,0 +1,216 @@
+Description: One Beat FX that works from the first press
+ The DDJ-400 BEAT FX section acted on Effect Unit 1's *focused* effect, and
+ Mixxx starts with none in focus (focused_effect 0), so ON/OFF switched a
+ non-existent slot until BEAT < or > had been pressed to pick one. And
+ LEVEL/DEPTH had soft takeover on the unit's mix, which Mixxx remembers
+ between runs, so the knob did nothing until it had been swept past the old
+ value ("turn it to zero first").
+ .
+ The mapping now drives Effect 1 only: BEAT < / > load the previous / next
+ effect into it (as FX SELECT and SHIFT + FX SELECT do), ON/OFF toggles it,
+ LEVEL/DEPTH sets the mix directly, SHIFT + LEVEL/DEPTH its meta (still with
+ soft takeover). init() switches slots 2 and 3 off, since the skin no longer
+ shows them. StandardEffectChain also puts the focus on the first effect when
+ it comes up at 0, which covers a stale copy of the mapping in the user
+ mapping folder (see browse-encoder-zoom.patch).
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+---
+diff --git a/res/controllers/Pioneer-DDJ-400-script.js b/res/controllers/Pioneer-DDJ-400-script.js
+index 821c0ef..f4286e3 100644
+--- a/res/controllers/Pioneer-DDJ-400-script.js
++++ b/res/controllers/Pioneer-DDJ-400-script.js
+@@ -18,14 +18,15 @@
+ //      * Sampler Mode
+ //
+ //  Custom (Mixxx specific mappings):
+-//      * BeatFX: Assigned Effect Unit 1
+-//                < LEFT toggles focus between Effects 1, 2 and 3 leftward
+-//                > RIGHT toggles focus between Effects 1, 2 and 3 rightward
+-//                v DOWN loads next effect entry for focused Effect
+-//                SHIFT + v UP loads previous effect entry for focused Effect
++//      * BeatFX: Effect 1 of Effect Unit 1 (Pioneered: one effect, like the
++//                BEAT FX on Pioneer gear; slots 2 and 3 are not used)
++//                < LEFT loads the previous effect
++//                > RIGHT loads the next effect
++//                v DOWN loads the next effect
++//                SHIFT + v UP loads the previous effect
+ //                LEVEL/DEPTH controls the Mix knob of the Effect Unit
+-//                SHIFT + LEVEL/DEPTH controls the Meta knob of the focused Effect
+-//                ON/OFF toggles focused effect slot
++//                SHIFT + LEVEL/DEPTH controls the Meta knob of the effect
++//                ON/OFF toggles the effect
+ //                SHIFT + ON/OFF disables all three effect slots.
+ //      * 32 beat jump forward & back (Shift + </> CUE/LOOP CALL arrows)
+ //      * Toggle quantize (Shift + channel cue)
+@@ -44,6 +45,12 @@
+ 
+ var PioneerDDJ400 = {};
+ 
++// Pioneered: the one Beat FX. The Beat FX section used to act on the unit's
++// *focused* effect, and Mixxx starts with no effect in focus
++// (focused_effect 0), so ON/OFF switched a slot that does not exist until
++// BEAT < or > had been pressed to pick one.
++PioneerDDJ400.beatFxGroup = "[EffectRack1_EffectUnit1_Effect1]";
++
+ PioneerDDJ400.lights = {
+     beatFx: {
+         status: 0x94,
+@@ -240,10 +247,20 @@ PioneerDDJ400.init = function() {
+ 
+     engine.softTakeover("[Channel1]", "rate", true);
+     engine.softTakeover("[Channel2]", "rate", true);
+-    engine.softTakeover("[EffectRack1_EffectUnit1_Effect1]", "meta", true);
+-    engine.softTakeover("[EffectRack1_EffectUnit1_Effect2]", "meta", true);
+-    engine.softTakeover("[EffectRack1_EffectUnit1_Effect3]", "meta", true);
+-    engine.softTakeover("[EffectRack1_EffectUnit1]", "mix", true);
++    // Pioneered: no soft takeover on LEVEL/DEPTH. Mixxx remembers the mix
++    // between runs, so with soft takeover the knob did nothing until it had
++    // been swept past wherever the mix was left -- in practice, "turn it to
++    // zero first". A Pioneer LEVEL/DEPTH knob is simply where it is. The meta
++    // (SHIFT + LEVEL/DEPTH) keeps it, so letting go of SHIFT does not jump
++    // the effect's parameter to the mix knob's position.
++    engine.softTakeover(PioneerDDJ400.beatFxGroup, "meta", true);
++
++    // Pioneered: one Beat FX. Slots 2 and 3 are not on screen any more, so
++    // one left switched on from an earlier session could never be switched
++    // off; and the unit keeps its focus on slot 1.
++    engine.setValue("[EffectRack1_EffectUnit1_Effect2]", "enabled", 0);
++    engine.setValue("[EffectRack1_EffectUnit1_Effect3]", "enabled", 0);
++    engine.setValue("[EffectRack1_EffectUnit1]", "focused_effect", 1);
+ 
+     const samplerCount = 16;
+     if (engine.getValue("[App]", "num_samplers") < samplerCount) {
+@@ -284,10 +301,8 @@ PioneerDDJ400.init = function() {
+     engine.makeConnection("[Channel1]", "track_loaded", PioneerDDJ400.clearLoopAdjust);
+     engine.makeConnection("[Channel2]", "track_loaded", PioneerDDJ400.clearLoopAdjust);
+ 
+-    for (let i = 1; i <= 3; i++) {
+-        engine.makeConnection("[EffectRack1_EffectUnit1_Effect" + i +"]", "enabled", PioneerDDJ400.toggleFxLight);
+-    }
+-    engine.makeConnection("[EffectRack1_EffectUnit1]", "focused_effect", PioneerDDJ400.toggleFxLight);
++    engine.makeConnection(PioneerDDJ400.beatFxGroup, "enabled", PioneerDDJ400.toggleFxLight);
++    PioneerDDJ400.toggleFxLight();
+ 
+     // query the controller for current control positions on startup
+     midi.sendSysexMsg([0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x06, 0x00, 0x03, 0x01, 0xf7], 12);
+@@ -316,79 +331,58 @@ PioneerDDJ400.vuMeterUpdate = function(value, group) {
+ //
+ 
+ PioneerDDJ400.toggleFxLight = function(_value, _group, _control) {
+-    const enabled = engine.getValue(PioneerDDJ400.focusedFxGroup(), "enabled");
++    const enabled = engine.getValue(PioneerDDJ400.beatFxGroup, "enabled");
+ 
+     PioneerDDJ400.toggleLight(PioneerDDJ400.lights.beatFx, enabled);
+     PioneerDDJ400.toggleLight(PioneerDDJ400.lights.shiftBeatFx, enabled);
+ };
+ 
+-PioneerDDJ400.focusedFxGroup = function() {
+-    const focusedFx = engine.getValue("[EffectRack1_EffectUnit1]", "focused_effect");
+-    return "[EffectRack1_EffectUnit1_Effect" + focusedFx + "]";
+-};
+-
+ PioneerDDJ400.beatFxLevelDepthRotate = function(_channel, _control, value) {
+     if (PioneerDDJ400.shiftButtonDown[0] || PioneerDDJ400.shiftButtonDown[1]) {
+-        engine.softTakeoverIgnoreNextValue("[EffectRack1_EffectUnit1]", "mix");
+-        engine.setParameter(PioneerDDJ400.focusedFxGroup(), "meta", value / 0x7F);
++        engine.setParameter(PioneerDDJ400.beatFxGroup, "meta", value / 0x7F);
+     } else {
+-        engine.softTakeoverIgnoreNextValue(PioneerDDJ400.focusedFxGroup(), "meta");
++        engine.softTakeoverIgnoreNextValue(PioneerDDJ400.beatFxGroup, "meta");
+         engine.setParameter("[EffectRack1_EffectUnit1]", "mix", value / 0x7F);
+     }
+ };
+ 
+-PioneerDDJ400.changeFocusedEffectBy = function(numberOfSteps) {
+-    let focusedEffect = engine.getValue("[EffectRack1_EffectUnit1]", "focused_effect");
+-
+-    // Convert to zero-based index
+-    focusedEffect -= 1;
+-
+-    // Standard Euclidean modulo by use of two plain modulos
+-    const numberOfEffectsPerEffectUnit = 3;
+-    focusedEffect = (((focusedEffect + numberOfSteps) % numberOfEffectsPerEffectUnit) + numberOfEffectsPerEffectUnit) % numberOfEffectsPerEffectUnit;
+-
+-    // Convert back to one-based index
+-    focusedEffect += 1;
+-
+-    engine.setValue("[EffectRack1_EffectUnit1]", "focused_effect", focusedEffect);
+-};
+-
++// Pioneered: with one effect there is no focus to move, so BEAT < and > pick
++// the effect, which is what they look like they should do.
+ PioneerDDJ400.beatFxLeftPressed = function(_channel, _control, value) {
+     if (value === 0) { return; }
+ 
+-    PioneerDDJ400.changeFocusedEffectBy(-1);
++    engine.setValue(PioneerDDJ400.beatFxGroup, "prev_effect", 1);
+ };
+ 
+ PioneerDDJ400.beatFxRightPressed = function(_channel, _control, value) {
+     if (value === 0) { return; }
+ 
+-    PioneerDDJ400.changeFocusedEffectBy(1);
++    engine.setValue(PioneerDDJ400.beatFxGroup, "next_effect", 1);
+ };
+ 
+ PioneerDDJ400.beatFxSelectPressed = function(_channel, _control, value) {
+     if (value === 0) { return; }
+ 
+-    engine.setValue(PioneerDDJ400.focusedFxGroup(), "next_effect", value);
++    engine.setValue(PioneerDDJ400.beatFxGroup, "next_effect", value);
+ };
+ 
+ PioneerDDJ400.beatFxSelectShiftPressed = function(_channel, _control, value) {
+     if (value === 0) { return; }
+ 
+-    engine.setValue(PioneerDDJ400.focusedFxGroup(), "prev_effect", value);
++    engine.setValue(PioneerDDJ400.beatFxGroup, "prev_effect", value);
+ };
+ 
+ PioneerDDJ400.beatFxOnOffPressed = function(_channel, _control, value) {
+     if (value === 0) { return; }
+ 
+-    const toggleEnabled = !engine.getValue(PioneerDDJ400.focusedFxGroup(), "enabled");
+-    engine.setValue(PioneerDDJ400.focusedFxGroup(), "enabled", toggleEnabled);
++    const toggleEnabled = !engine.getValue(PioneerDDJ400.beatFxGroup, "enabled");
++    engine.setValue(PioneerDDJ400.beatFxGroup, "enabled", toggleEnabled);
+ };
+ 
+ PioneerDDJ400.beatFxOnOffShiftPressed = function(_channel, _control, value) {
+     if (value === 0) { return; }
+ 
+     engine.setParameter("[EffectRack1_EffectUnit1]", "mix", 0);
+-    engine.softTakeoverIgnoreNextValue("[EffectRack1_EffectUnit1]", "mix");
+ 
+     for (let i = 1; i <= 3; i++) {
+         engine.setValue("[EffectRack1_EffectUnit1_Effect" + i + "]", "enabled", 0);
+diff --git a/src/effects/chains/standardeffectchain.cpp b/src/effects/chains/standardeffectchain.cpp
+index e73d15b..c3f2b57 100644
+--- a/src/effects/chains/standardeffectchain.cpp
++++ b/src/effects/chains/standardeffectchain.cpp
+@@ -1,5 +1,6 @@
+ #include "effects/chains/standardeffectchain.h"
+ 
++#include "control/controlobject.h"
+ #include "effects/effectsmanager.h"
+ #include "mixer/playermanager.h"
+ #include "moc_standardeffectchain.cpp"
+@@ -15,6 +16,17 @@ StandardEffectChain::StandardEffectChain(unsigned int iChainNumber,
+         addEffectSlot(formatEffectSlotGroup(iChainNumber, i));
+     }
+ 
++    // Pioneered: a unit always has an effect in focus. Mixxx starts (and
++    // remembers) focused_effect at 0, "none", and the DDJ-400 mapping's ON/OFF
++    // switches the *focused* effect -- so with nothing in focus the button did
++    // nothing until BEAT < or > had picked an effect. The mapping now always
++    // drives the first effect, but a stale copy of it in the user mapping
++    // folder would not (see browse-encoder-zoom.patch), and this covers that.
++    const ConfigKey focusedEffectKey(group(), QStringLiteral("focused_effect"));
++    if (ControlObject::get(focusedEffectKey) < 1) {
++        ControlObject::set(focusedEffectKey, 1);
++    }
++
+     const QSet<ChannelHandleAndGroup>& registeredChannels =
+             m_pEffectsManager->registeredInputChannels();
+     for (const ChannelHandleAndGroup& handle_group : registeredChannels) {

@@ -1,0 +1,269 @@
+Description: Tracks played for 30 s are greyed out until their stick is ejected
+ Like the played history on a Pioneer player: once a track has played on a
+ deck for 30 s (counted while the deck is playing, reset when the deck loads
+ a different track), every track list draws it in the played-track colour
+ (WTrackTableView's trackPlayedColor, #555555 by default). It stays grey
+ until the USB stick it is on is ejected or pulled, or Mixxx restarts.
+ .
+ New XdjPlayedTracks singleton (src/library/xdjplayedtracks.{h,cpp}) keeps
+ the set of played file locations in memory, measured on a 1 s timer from
+ [ChannelN],play and PlayerInfo's loaded track. BaseTrackTableModel checks a
+ row's location in its ForegroundRole, after the missing-file colour, and
+ repaints when the set changes. LibraryControl drops a stick's entries when
+ its umount succeeds and when the mount poll sees the slot go away. Nothing
+ is written to the library: Mixxx's own "played" flag (which rekordbox
+ lists do not have, and which would outlive the stick) is untouched.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5cfba70..76a3aae 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1010,6 +1010,7 @@ add_library(mixxx-lib STATIC EXCLUDE_FROM_ALL
+   src/library/traktor/traktorfeature.cpp
+   src/library/treeitem.cpp
+   src/library/treeitemmodel.cpp
++  src/library/xdjplayedtracks.cpp
+   src/mixer/auxiliary.cpp
+   src/mixer/baseplayer.cpp
+   src/mixer/basetrackplayer.cpp
+diff --git a/src/library/basetracktablemodel.cpp b/src/library/basetracktablemodel.cpp
+index 4bce0b1..5cf7e28 100644
+--- a/src/library/basetracktablemodel.cpp
++++ b/src/library/basetracktablemodel.cpp
+@@ -27,6 +27,7 @@
+ #include "library/tabledelegates/stardelegate.h"
+ #include "library/trackcollection.h"
+ #include "library/trackcollectionmanager.h"
++#include "library/xdjplayedtracks.h"
+ #include "mixer/playerinfo.h"
+ #include "mixer/playermanager.h"
+ #include "moc_basetracktablemodel.cpp"
+@@ -348,6 +349,21 @@ BaseTrackTableModel::BaseTrackTableModel(
+                 index(rows - 1, keyColumn),
+                 {Qt::BackgroundRole});
+     });
++    connect(&XdjPlayedTracks::instance(),
++            &XdjPlayedTracks::playedChanged,
++            this,
++            [this] {
++                // Rare (a track crossing 30 s, a stick going away), so the
++                // whole model is simply repainted.
++                const int rows = rowCount();
++                const int columns = columnCount();
++                if (rows <= 0 || columns <= 0) {
++                    return;
++                }
++                emit dataChanged(index(0, 0),
++                        index(rows - 1, columns - 1),
++                        {Qt::ForegroundRole});
++            });
+ }
+ 
+ BaseTrackTableModel::~BaseTrackTableModel() {
+@@ -767,6 +783,16 @@ QVariant BaseTrackTableModel::data(
+                 missingRaw.toBool()) {
+             return QVariant::fromValue(m_trackMissingColor);
+         }
++        // Pioneered: a track played for 30 s this session is greyed out
++        // until its stick is ejected, like the history on a Pioneer player.
++        // Independent of Mixxx's own "played" flag below, which rekordbox
++        // lists do not have and which would outlive the stick.
++        if (XdjPlayedTracks::instance().isPlayed(
++                    rawSiblingValue(index,
++                            ColumnCache::COLUMN_TRACKLOCATIONSTABLE_LOCATION)
++                            .toString())) {
++            return QVariant::fromValue(m_trackPlayedColor);
++        }
+         if (s_bApplyPlayedTrackColor) {
+             // Custom text color for played tracks
+             auto playedRaw = rawSiblingValue(
+diff --git a/src/library/librarycontrol.cpp b/src/library/librarycontrol.cpp
+index 46b4a77..8d2429e 100644
+--- a/src/library/librarycontrol.cpp
++++ b/src/library/librarycontrol.cpp
+@@ -19,6 +19,7 @@
+ #include "library/libraryview.h"
+ #include "library/rekordbox/rekordboxfeature.h"
+ #include "library/sidebarmodel.h"
++#include "library/xdjplayedtracks.h"
+ #include "mixer/playerinfo.h"
+ #include "mixer/playermanager.h"
+ #include "moc_librarycontrol.cpp"
+@@ -2181,6 +2182,8 @@ void LibraryControl::tryUmount(int usbIndex, const QString& mountPath) {
+                 pProcess->deleteLater();
+                 if (exitStatus == QProcess::NormalExit && exitCode == 0) {
+                     m_ejectRunning = false;
++                    // The stick's played history goes with it.
++                    XdjPlayedTracks::instance().forgetUnder(mountPath);
+                     // Device gone: refresh the Rekordbox device list so the
+                     // sidebar row (and its playlists/tracks) disappears
+                     refreshRekordboxDevices();
+@@ -2280,6 +2283,8 @@ void LibraryControl::slotPollUsbMounts() {
+             // sidebar was showing it, rowsRemoved -> validateSidebarRoot()
+             // takes the sidebar back to the stick list.
+             wasMounted = false;
++            // Pulled without an eject: its played history goes too.
++            XdjPlayedTracks::instance().forgetUnder(usbMountPath(usbIndex));
+             refreshRekordboxDevices();
+             continue;
+         }
+diff --git a/src/library/xdjplayedtracks.cpp b/src/library/xdjplayedtracks.cpp
+new file mode 100644
+index 0000000..eda79a9
+--- /dev/null
++++ b/src/library/xdjplayedtracks.cpp
+@@ -0,0 +1,91 @@
++#include "library/xdjplayedtracks.h"
++
++#include "control/controlobject.h"
++#include "control/controlproxy.h"
++#include "mixer/playerinfo.h"
++#include "moc_xdjplayedtracks.cpp"
++#include "track/track.h"
++
++namespace {
++
++// Coarse on purpose: the threshold is 30 s and a second either way does not
++// matter. Time is measured, not counted in ticks, so a late tick is not lost.
++constexpr int kTickIntervalMs = 1000;
++
++} // anonymous namespace
++
++// static
++XdjPlayedTracks& XdjPlayedTracks::instance() {
++    static XdjPlayedTracks* s_pInstance = new XdjPlayedTracks();
++    return *s_pInstance;
++}
++
++XdjPlayedTracks::XdjPlayedTracks() {
++    connect(&m_timer, &QTimer::timeout, this, &XdjPlayedTracks::slotTick);
++    m_timer.start(kTickIntervalMs);
++    m_sinceLastTick.start();
++}
++
++XdjPlayedTracks::~XdjPlayedTracks() = default;
++
++void XdjPlayedTracks::slotTick() {
++    const qint64 elapsedMs = m_sinceLastTick.restart();
++    bool changed = false;
++    for (int i = 0; i < kMaxDecks; ++i) {
++        DeckState& deck = m_decks[i];
++        const QString group = QStringLiteral("[Channel%1]").arg(i + 1);
++        if (!deck.pPlay) {
++            // The decks may not exist yet on the first ticks, and a deck
++            // added later in the preferences turns up here too.
++            const ConfigKey playKey(group, QStringLiteral("play"));
++            if (!ControlObject::exists(playKey)) {
++                continue;
++            }
++            deck.pPlay = std::make_unique<ControlProxy>(playKey, this);
++        }
++        const TrackPointer pTrack = PlayerInfo::instance().getTrackInfo(group);
++        const QString location = pTrack ? pTrack->getLocation() : QString();
++        if (location != deck.location) {
++            // A new track starts from zero, even one played before.
++            deck.location = location;
++            deck.playedMs = 0;
++        }
++        if (location.isEmpty() || !deck.pPlay->toBool() ||
++                m_played.contains(location)) {
++            continue;
++        }
++        deck.playedMs += elapsedMs;
++        if (deck.playedMs >= kPlayedThresholdMs) {
++            m_played.insert(location);
++            changed = true;
++        }
++    }
++    if (changed) {
++        emit playedChanged();
++    }
++}
++
++void XdjPlayedTracks::forgetUnder(const QString& directory) {
++    const QString prefix = directory.endsWith(QChar('/'))
++            ? directory
++            : directory + QChar('/');
++    bool changed = false;
++    for (auto it = m_played.begin(); it != m_played.end();) {
++        if (it->startsWith(prefix)) {
++            it = m_played.erase(it);
++            changed = true;
++        } else {
++            ++it;
++        }
++    }
++    // A track still on a deck is off the stick now too; if the stick comes
++    // back, that deck's clock starts again rather than resuming.
++    for (auto& deck : m_decks) {
++        if (deck.location.startsWith(prefix)) {
++            deck.playedMs = 0;
++        }
++    }
++    if (changed) {
++        emit playedChanged();
++    }
++}
+diff --git a/src/library/xdjplayedtracks.h b/src/library/xdjplayedtracks.h
+new file mode 100644
+index 0000000..82ae067
+--- /dev/null
++++ b/src/library/xdjplayedtracks.h
+@@ -0,0 +1,55 @@
++#pragma once
++
++#include <QElapsedTimer>
++#include <QObject>
++#include <QSet>
++#include <QString>
++#include <QTimer>
++#include <memory>
++
++class ControlProxy;
++
++/// Pioneered: the tracks played on a deck for at least kPlayedThresholdMs
++/// this session, which the track lists draw greyed out, like the played
++/// history on a Pioneer player. Kept in memory by file location, so it lasts
++/// until the stick the files are on is ejected or pulled (LibraryControl
++/// calls forgetUnder()) or Mixxx restarts. Nothing is written to the
++/// library: Mixxx's own "played" flag is left alone.
++class XdjPlayedTracks : public QObject {
++    Q_OBJECT
++  public:
++    static constexpr qint64 kPlayedThresholdMs = 30 * 1000;
++
++    /// Created on first use and started at once. Lives for the whole run.
++    static XdjPlayedTracks& instance();
++
++    bool isPlayed(const QString& location) const {
++        return !location.isEmpty() && m_played.contains(location);
++    }
++
++    /// Forget every track under this directory (a stick's mount point).
++    void forgetUnder(const QString& directory);
++
++  signals:
++    /// The played set changed; views repaint their text colour.
++    void playedChanged();
++
++  private:
++    static constexpr int kMaxDecks = 4;
++
++    struct DeckState {
++        std::unique_ptr<ControlProxy> pPlay;
++        QString location;
++        qint64 playedMs = 0;
++    };
++
++    XdjPlayedTracks();
++    ~XdjPlayedTracks() override;
++
++    void slotTick();
++
++    QTimer m_timer;
++    QElapsedTimer m_sinceLastTick;
++    DeckState m_decks[kMaxDecks];
++    QSet<QString> m_played;
++};

@@ -1,0 +1,29 @@
+<!DOCTYPE template>
+<!--
+  One Color FX button: picks what both FILTER knobs do.
+  Variables:
+    fx:    the option id (space, dub_echo, noise, filter)
+    label: the button text
+  [Pioneered],color_fx_<fx> reads 1 while the option is selected. A tap
+  requests the opposite of what is lit: 1 selects it (and clears the other
+  three), and the 0 a tap on the lit button asks for is refused, so the four
+  buttons behave as radio buttons.
+-->
+<Template>
+  <PushButton>
+    <ObjectName>ColorFxButton</ObjectName>
+    <Size>0me,34f</Size>
+    <NumberStates>2</NumberStates>
+    <State>
+      <Number>0</Number>
+      <Text><Variable name="label"/></Text>
+    </State>
+    <State>
+      <Number>1</Number>
+      <Text><Variable name="label"/></Text>
+    </State>
+    <Connection>
+      <ConfigKey>[Pioneered],color_fx_<Variable name="fx"/></ConfigKey>
+    </Connection>
+  </PushButton>
+</Template>

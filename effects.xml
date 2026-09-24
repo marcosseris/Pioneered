@@ -30,21 +30,63 @@
           </VuMeter>
         </Children>
       </WidgetGroup>
+      <!-- One Beat FX, like Pioneer gear: the DDJ-400's BEAT FX section
+           (BEAT < / > pick the effect, ON/OFF, LEVEL/DEPTH) drives this
+           slot and only this slot. -->
       <Template src="skin:effect.xml">
         <SetVariable name="rack">1</SetVariable>
         <SetVariable name="unit">1</SetVariable>
         <SetVariable name="effect">1</SetVariable>
       </Template>
-      <Template src="skin:effect.xml">
-        <SetVariable name="rack">1</SetVariable>
-        <SetVariable name="unit">1</SetVariable>
-        <SetVariable name="effect">2</SetVariable>
-      </Template>
-      <Template src="skin:effect.xml">
-        <SetVariable name="rack">1</SetVariable>
-        <SetVariable name="unit">1</SetVariable>
-        <SetVariable name="effect">3</SetVariable>
-      </Template>
+
+      <!-- Color FX: what both FILTER knobs do. Quiet with the knob at the
+           centre; the effect grows towards either end over a low-pass
+           (left) or high-pass (right) sweep. -->
+      <WidgetGroup>
+        <ObjectName>BeatFX_Header</ObjectName>
+        <Layout>vertical</Layout>
+        <Size>20me,16p</Size>
+        <Children>
+          <Label>
+            <ObjectName>BeatFX_Title</ObjectName>
+            <Text>Color FX</Text>
+          </Label>
+        </Children>
+      </WidgetGroup>
+      <WidgetGroup>
+        <ObjectName>ColorFx_Grid</ObjectName>
+        <Layout>vertical</Layout>
+        <Children>
+          <WidgetGroup>
+            <Layout>horizontal</Layout>
+            <Size>0me,34f</Size>
+            <Children>
+              <Template src="skin:templates/color_fx_button.xml">
+                <SetVariable name="fx">space</SetVariable>
+                <SetVariable name="label">Space</SetVariable>
+              </Template>
+              <Template src="skin:templates/color_fx_button.xml">
+                <SetVariable name="fx">dub_echo</SetVariable>
+                <SetVariable name="label">Dub Echo</SetVariable>
+              </Template>
+            </Children>
+          </WidgetGroup>
+          <WidgetGroup>
+            <Layout>horizontal</Layout>
+            <Size>0me,34f</Size>
+            <Children>
+              <Template src="skin:templates/color_fx_button.xml">
+                <SetVariable name="fx">noise</SetVariable>
+                <SetVariable name="label">Noise</SetVariable>
+              </Template>
+              <Template src="skin:templates/color_fx_button.xml">
+                <SetVariable name="fx">filter</SetVariable>
+                <SetVariable name="label">Filter</SetVariable>
+              </Template>
+            </Children>
+          </WidgetGroup>
+        </Children>
+      </WidgetGroup>
     </Children>
   </WidgetGroup>
 </Template>
