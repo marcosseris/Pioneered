@@ -71,7 +71,18 @@ diff --git a/src/waveform/renderers/waveformrenderersignalbase.cpp b/src/wavefor
 diff --git a/src/waveform/renderers/waveformwidgetrenderer.cpp b/src/waveform/renderers/waveformwidgetrenderer.cpp
 --- a/src/waveform/renderers/waveformwidgetrenderer.cpp
 +++ b/src/waveform/renderers/waveformwidgetrenderer.cpp
-@@ -126,7 +126,12 @@
+@@ -11,7 +11,9 @@
+ #include "waveform/waveform.h"
+
+ const double WaveformWidgetRenderer::s_waveformMinZoom = 1.0;
+-const double WaveformWidgetRenderer::s_waveformMaxZoom = 10.0;
++// Pioneered: let the waveforms zoom out further than stock (10.0). The mouse
++// wheel and the BROWSE encoder on the Overview tab both stop at this limit.
++const double WaveformWidgetRenderer::s_waveformMaxZoom = 15.0;
+ const double WaveformWidgetRenderer::s_waveformDefaultZoom = 3.0;
+ const double WaveformWidgetRenderer::s_defaultPlayMarkerPosition = 0.5;
+
+@@ -126,7 +128,12 @@
      //Fetch parameters before rendering in order the display all sub-renderers with the same values
      double rateRatio = m_pRateRatioCO->get();
 

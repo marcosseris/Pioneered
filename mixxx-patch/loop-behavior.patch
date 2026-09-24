@@ -28,6 +28,18 @@ Description: Loops that stay in time, and a loop section that cannot latch
     a Pioneer player boots. Mixxx defaults it off per deck and then remembers
     it, so a rig could sit with one deck quantised and the other not. The
     on-screen QUANTIZE button still turns it off for the rest of the session.
+ 4. A track loads with no loop. BaseTrackPlayerImpl::loadTrack() armed the
+    track's lowest-numbered loop cue -- the loop that was set when the track
+    was last ejected, or else the first rekordbox memory loop -- so a freshly
+    loaded track came up with a loop sitting in the middle of it. RELOOP/EXIT
+    then caught the deck in it when the play head got there, and it kept
+    looping. Saved loops are still on their hot cue pads; a deck cloned from
+    another deck still takes that deck's loop.
+ 5. With no loop running, LOOP IN starts a new loop. Mixxx kept the out point
+    of the loop that was last left, so IN pressed anywhere before it made a
+    loop from there to that old out point and started it straight away: the
+    deck played on into the middle of the track and then kept jumping back.
+    OUT now decides where the new loop ends.
 Author: Pioneered CI <pioneered-build@localhost>
 Forwarded: no
 
@@ -69,7 +81,26 @@ Forwarded: no
              }
              position = quantizedBeatPosition;
          }
-@@ -887,22 +892,21 @@
+@@ -852,6 +857,18 @@
+     } else {
+         emit loopReset();
+         if (pressed > 0.0) {
++            // Pioneered: with no loop running, IN starts a new loop, like on
++            // a Pioneer player -- OUT decides where it ends. Stock Mixxx kept
++            // the out point of the loop that was last exited, so IN pressed
++            // anywhere before it made a loop from here to that old out point
++            // and started it at once: the deck played on to the middle of the
++            // track and then kept jumping back.
++            LoopInfo loopInfo = m_loopInfo.getValue();
++            if (loopInfo.endPosition.isValid()) {
++                loopInfo.endPosition = mixxx::audio::kInvalidFramePos;
++                m_pCOLoopEndPosition->set(kNoTrigger);
++                m_loopInfo.setValue(loopInfo);
++            }
+             setLoopInToCurrentPosition();
+         }
+         m_bAdjustingLoopIn = false;
+@@ -887,22 +904,21 @@
                      (nextBeatPosition - position > position - prevBeatPosition)
                      ? prevBeatPosition
                      : nextBeatPosition;
@@ -107,9 +138,82 @@ Forwarded: no
              }
              // Note: with quantize enabled and playpos AFTER an inactive loop,
              // the new loop_out might snap to the exact the same position as before.
+--- a/src/mixer/basetrackplayer.cpp
++++ b/src/mixer/basetrackplayer.cpp
+@@ -330,37 +330,17 @@
+ 
+     // The loop in and out points must be set here and not in slotTrackLoaded
+     // so LoopingControl::trackLoaded can access them.
+-    if (!m_pChannelToCloneFrom) {
+-        // Restore loop from the first loop cue with minimum hotcue number.
+-        // For the volatile "most recent loop" the hotcue number will be -1.
+-        // If no such loop exists, restore a saved loop cue.
+-        CuePointer pLoopCue;
+-        const QList<CuePointer> trackCues = m_pLoadedTrack->getCuePoints();
+-        for (const auto& pCue : trackCues) {
+-            if (pCue->getType() != mixxx::CueType::Loop) {
+-                continue;
+-            }
+-            if (pLoopCue && pLoopCue->getHotCue() <= pCue->getHotCue()) {
+-                continue;
+-            }
+-            pLoopCue = pCue;
+-        }
+-
+-        if (pLoopCue) {
+-            const auto loop = pLoopCue->getStartAndEndPosition();
+-            if (loop.startPosition.isValid() && loop.endPosition.isValid() &&
+-                    loop.startPosition <= loop.endPosition) {
+-                // TODO: For all loop cues, both end and start positions should
+-                // be valid and the end position should be greater than the
+-                // start position. We should use a VERIFY_OR_DEBUG_ASSERT to
+-                // check this. To make this possible, we need to ensure that
+-                // all invalid cues are discarded when saving cues to the
+-                // database first.
+-                m_pLoopInPoint->set(loop.startPosition.toEngineSamplePos());
+-                m_pLoopOutPoint->set(loop.endPosition.toEngineSamplePos());
+-            }
+-        }
+-    } else {
++    //
++    // Pioneered: a track loads with no loop, like on a Pioneer player. Stock
++    // Mixxx armed the loop from the track's lowest-numbered loop cue here --
++    // the loop that was running when the track was last ejected, or else the
++    // first rekordbox memory loop -- so a freshly loaded track came up with a
++    // loop sitting somewhere in the middle of it. RELOOP/EXIT then caught the
++    // deck in it when the play head got there, and LOOP IN pressed anywhere
++    // before it made a loop from there to that old out point. Saved loops
++    // are still on their hot cue pads, and a deck cloned from another one
++    // still takes that deck's loop.
++    if (m_pChannelToCloneFrom) {
+         // copy loop in and out points from other deck because any new loops
+         // won't be saved yet
+         m_pLoopInPoint->set(ControlObject::get(
 --- a/src/test/looping_control_test.cpp
 +++ b/src/test/looping_control_test.cpp
-@@ -353,10 +353,17 @@
+@@ -275,6 +275,21 @@
+     EXPECT_FRAMEPOS_EQ_CONTROL(mixxx::audio::FramePos{1500}, m_pLoopStartPoint);
+ }
+ 
++TEST_F(LoopingControlTest, LoopInButton_StartsNewLoopWhileLoopDisabled) {
++    // Pioneered: with no loop running, IN starts a new loop instead of
++    // reaching forward to the out point of a loop that is no longer playing.
++    m_pQuantizeEnabled->set(0);
++    m_pLoopStartPoint->set(mixxx::audio::FramePos{1000}.toEngineSamplePos());
++    m_pLoopEndPoint->set(mixxx::audio::FramePos{2000}.toEngineSamplePos());
++    EXPECT_FALSE(isLoopEnabled());
++    setCurrentPosition(mixxx::audio::FramePos{50});
++    m_pButtonLoopIn->set(1);
++    m_pButtonLoopIn->set(0);
++    EXPECT_FRAMEPOS_EQ_CONTROL(mixxx::audio::FramePos{50}, m_pLoopStartPoint);
++    EXPECT_FRAMEPOS_EQ_CONTROL(mixxx::audio::kInvalidFramePos, m_pLoopEndPoint);
++    EXPECT_FALSE(isLoopEnabled());
++}
++
+ TEST_F(LoopingControlTest, LoopOutButton_QuantizeDisabled) {
+     m_pQuantizeEnabled->set(0);
+     m_pClosestBeat->set(1000);
+@@ -353,10 +368,17 @@
      EXPECT_TRUE(m_pBeatLoop4Enabled->toBool());
  
      // Check that beatloop_4_enabled is reset to 0 when changing the loop size.
@@ -127,6 +231,44 @@ Forwarded: no
      m_pButtonLoopOut->set(0);
      ProcessBuffer();
      EXPECT_EQ(m_pClosestBeat->get(), m_pLoopEndPoint->get());
+--- a/src/test/hotcuecontrol_test.cpp
++++ b/src/test/hotcuecontrol_test.cpp
+@@ -1521,3 +1521,35 @@
+     EXPECT_FRAMEPOS_EQ_CONTROL(mixxx::audio::kStartFramePos, m_pHotcue1Position);
+     EXPECT_FRAMEPOS_EQ_CONTROL(loopEndPosition, m_pHotcue1EndPosition);
+ }
++
++TEST_F(HotcueControlTest, LoadTrackDoesNotRestoreLoop) {
++    // Pioneered: a track loads with no loop armed, like on a Pioneer player,
++    // even when it was ejected with a loop set. A loop left armed in the
++    // middle of the track catches the deck on RELOOP/EXIT and turns the next
++    // LOOP IN into a loop that runs all the way to it.
++    TrackPointer pTrack = loadTestTrackWithBpm(120.0);
++
++    // Set a beatloop, then leave it
++    m_pBeatloopActivate->set(1);
++    m_pBeatloopActivate->set(0);
++    ProcessBuffer();
++    m_pLoopEnabled->set(0);
++    ProcessBuffer();
++    EXPECT_TRUE(mixxx::audio::FramePos::fromEngineSamplePosMaybeInvalid(
++            m_pLoopStartPosition->get())
++                        .isValid());
++    EXPECT_TRUE(mixxx::audio::FramePos::fromEngineSamplePosMaybeInvalid(
++            m_pLoopEndPosition->get())
++                        .isValid());
++
++    unloadTrack();
++    loadTrack(pTrack);
++
++    EXPECT_FALSE(mixxx::audio::FramePos::fromEngineSamplePosMaybeInvalid(
++            m_pLoopStartPosition->get())
++                         .isValid());
++    EXPECT_FALSE(mixxx::audio::FramePos::fromEngineSamplePosMaybeInvalid(
++            m_pLoopEndPosition->get())
++                         .isValid());
++    EXPECT_FALSE(m_pLoopEnabled->toBool());
++}
 --- a/res/controllers/Pioneer-DDJ-400-script.js
 +++ b/res/controllers/Pioneer-DDJ-400-script.js
 @@ -143,6 +143,14 @@

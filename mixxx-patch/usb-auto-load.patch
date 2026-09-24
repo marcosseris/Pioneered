@@ -1,0 +1,531 @@
+Description: USB sticks load themselves, and the sidebar never shows the Mixxx tree
+ 1. A rekordbox stick is browsed the moment it is plugged in. LibraryControl
+    polls /media/USBA and /media/USBB once a second; a slot that newly holds a
+    mounted filesystem with PIONEER/rekordbox/export.pdb is browsed exactly as
+    if its USB button had been pressed (a stick already in at boot is picked
+    up on the first tick after the skin exists). A slot that stops being
+    mounted -- pulled without an eject -- triggers a device rescan, so its row
+    and the sidebar rooted at it go away instead of lingering. A new stick
+    waits while a USB hold or eject is running, and when both sticks appear
+    in the same tick only the first is opened.
+ .
+ 2. The playlists of a freshly parsed stick now appear without another press.
+    parseDeviceDB() attaches them to the device's TreeItem on the worker
+    thread with no model notifications, so the sidebar -- rooted at the
+    device while it was still empty -- kept showing an empty list. The only
+    way out was to press the button twice more: once to un-root (showing the
+    whole stock Mixxx tree) and once to root again. RekordboxFeature now
+    emits devicePlaylistsReady() when a parse lands, and LibraryControl
+    re-applies the root, which makes the view lay out again.
+ .
+ 3. The stock Mixxx tree (Tracks, Auto DJ, Playlists, Crates, Computer,
+    Recordings, History, Analyze...) is never shown. With no stick open, the
+    sidebar is rooted at the Rekordbox feature, i.e. just the list of sticks
+    that are in (empty when there are none). A press on the stick that is
+    already open no longer un-roots it; it goes back to the top of the stick,
+    like a CDJ's source button. A model reset, which drops a view's root,
+    puts the stick list back.
+ .
+ 4. Device rescans started by LibraryControl are silent. They used to go
+    through the feature's activate() -- what a tap on "Rekordbox" in the full
+    tree does -- which also switched the library pane to the Rekordbox help
+    page and selected the feature in the sidebar. RekordboxFeature::
+    rescanDevices() scans without either, and queues a request that arrives
+    mid-scan rather than dropping it (the running scan may have read /media
+    before the new mount). A tap-driven activate() is unchanged.
+ .
+ Skin side: none.
+Author: Pioneered fork
+Forwarded: no
+
+diff --git a/src/library/librarycontrol.cpp b/src/library/librarycontrol.cpp
+index 6b2f82d..46b4a77 100644
+--- a/src/library/librarycontrol.cpp
++++ b/src/library/librarycontrol.cpp
+@@ -1,6 +1,7 @@
+ #include "library/librarycontrol.h"
+ 
+ #include <QApplication>
++#include <QFileInfo>
+ #include <QKeyEvent>
+ #include <QModelIndex>
+ #include <QProcess>
+@@ -16,6 +17,7 @@
+ #include "engine/controls/ratecontrol.h"
+ #include "library/library.h"
+ #include "library/libraryview.h"
++#include "library/rekordbox/rekordboxfeature.h"
+ #include "library/sidebarmodel.h"
+ #include "mixer/playerinfo.h"
+ #include "mixer/playermanager.h"
+@@ -407,6 +409,16 @@ LibraryControl::LibraryControl(Library* pLibrary)
+             this,
+             &LibraryControl::clearPendingUsb);
+ 
++    // USB auto-load: watch the two mount points so a stick is browsed the
++    // moment it is plugged in (and a stick already in at boot, on the first
++    // tick after the skin is up). Two mount-table lookups a second is noise.
++    m_usbMountPollTimer.setInterval(1000);
++    connect(&m_usbMountPollTimer,
++            &QTimer::timeout,
++            this,
++            &LibraryControl::slotPollUsbMounts);
++    m_usbMountPollTimer.start();
++
+     // Auto DJ controls
+     m_pAutoDjAddTop = std::make_unique<ControlPushButton>(ConfigKey("[Library]", "AutoDjAddTop"));
+     m_pAutoDjAddTop->addAlias(ConfigKey(
+@@ -1210,6 +1222,41 @@ void LibraryControl::bindSidebarWidget(WLibrarySidebar* pSidebarWidget) {
+             &WLibrarySidebar::destroyed,
+             this,
+             &LibraryControl::sidebarWidgetDeleted);
++
++    // The stock Mixxx tree (Tracks, Auto DJ, Playlists, Crates, Computer...)
++    // never shows on this UI: the sidebar is always rooted either at a stick
++    // or at the stick list. Deferred because Library gives the widget its
++    // model only after this returns.
++    QTimer::singleShot(0, this, [this] {
++        SidebarModel* pSidebarModel = m_pLibrary->sidebarModel();
++        if (!m_pSidebarWidget || !pSidebarModel) {
++            return;
++        }
++        // rowsRemoved: the stick being shown went away. modelReset: drops the
++        // view's root back to the full tree.
++        connect(pSidebarModel,
++                &QAbstractItemModel::rowsRemoved,
++                this,
++                &LibraryControl::validateSidebarRoot,
++                Qt::UniqueConnection);
++        connect(pSidebarModel,
++                &QAbstractItemModel::modelReset,
++                this,
++                &LibraryControl::validateSidebarRoot,
++                Qt::UniqueConnection);
++        if (RekordboxFeature* pRekordbox = rekordboxFeature()) {
++            connect(pRekordbox,
++                    &RekordboxFeature::devicePlaylistsReady,
++                    this,
++                    &LibraryControl::slotRekordboxDevicePlaylistsReady,
++                    Qt::UniqueConnection);
++        }
++        if (m_rootedUsb != 0 && m_rootedDeviceIndex.isValid()) {
++            m_pSidebarWidget->setRootIndex(QModelIndex(m_rootedDeviceIndex));
++        } else {
++            restoreSidebarRoot();
++        }
++    });
+ }
+ 
+ void LibraryControl::bindLibraryWidget(WLibrary* pLibraryWidget, KeyboardEventFilter* pKeyboard) {
+@@ -1798,7 +1845,7 @@ void LibraryControl::slotUsbButtonRelease(int usbIndex) {
+     m_flashOn = false;
+     updateUsbStateControls();
+     if (elapsed < 600) {
+-        browseToggleUsb(usbIndex);
++        browseUsb(usbIndex);
+     }
+     // 600ms..5s: cancelled hold, no action
+ }
+@@ -2175,19 +2222,107 @@ void LibraryControl::tryUmount(int usbIndex, const QString& mountPath) {
+ }
+ 
+ void LibraryControl::refreshRekordboxDevices() {
++    // A silent rescan: activating the feature (what a tap on it does) would
++    // also switch the library pane to the Rekordbox help page.
++    if (RekordboxFeature* pRekordbox = rekordboxFeature()) {
++        pRekordbox->rescanDevices();
++    }
++}
++
++RekordboxFeature* LibraryControl::rekordboxFeature() const {
++    // Library parents its features; there is only ever one of these.
++    return m_pLibrary->findChild<RekordboxFeature*>(
++            QString(), Qt::FindDirectChildrenOnly);
++}
++
++QModelIndex LibraryControl::rekordboxFeatureIndex() const {
+     SidebarModel* pSidebarModel = m_pLibrary->sidebarModel();
+     VERIFY_OR_DEBUG_ASSERT(pSidebarModel) {
+-        return;
++        return QModelIndex();
+     }
+     for (int i = 0; i < pSidebarModel->rowCount(); ++i) {
+         const QModelIndex featureIndex = pSidebarModel->index(i, 0);
++        // endsWith: while scanning for devices the feature title is
++        // temporarily "(loading) Rekordbox"
+         const QString featureTitle =
+                 pSidebarModel->data(featureIndex, Qt::DisplayRole).toString();
+         if (featureTitle.endsWith(QStringLiteral("Rekordbox"),
+                     Qt::CaseInsensitive)) {
+-            pSidebarModel->clicked(featureIndex); // triggers device rescan
+-            return;
++            return featureIndex;
++        }
++    }
++    return QModelIndex();
++}
++
++// static
++bool LibraryControl::isRekordboxStickMounted(int usbIndex) {
++    const QString mountPath = usbMountPath(usbIndex);
++    const QStorageInfo storage(mountPath);
++    if (!storage.isValid() || !storage.isReady() ||
++            storage.rootPath() != mountPath) {
++        return false;
++    }
++    // Only a rekordbox export can be browsed; any other stick is left alone
++    // (the device scan would not list it anyway).
++    return QFileInfo::exists(
++            mountPath + QStringLiteral("/PIONEER/rekordbox/export.pdb"));
++}
++
++void LibraryControl::slotPollUsbMounts() {
++    for (int usbIndex = 1; usbIndex <= 2; ++usbIndex) {
++        bool& wasMounted = m_usbMounted[usbIndex - 1];
++        const bool mounted = isRekordboxStickMounted(usbIndex);
++        if (mounted == wasMounted) {
++            continue;
++        }
++        if (!mounted) {
++            // Pulled or ejected. Drop its row from the device list; if the
++            // sidebar was showing it, rowsRemoved -> validateSidebarRoot()
++            // takes the sidebar back to the stick list.
++            wasMounted = false;
++            refreshRekordboxDevices();
++            continue;
++        }
++        // A new stick. Hold off while the skin's sidebar does not exist yet
++        // (a stick that was in at boot) or a USB hold/eject owns the sidebar;
++        // it is not marked as seen, so the next tick tries again.
++        if (!m_pSidebarWidget || m_holdUsb != 0 || m_ejectRunning) {
++            continue;
+         }
++        wasMounted = true;
++        if (m_pendingUsb != 0 && m_pendingUsb != usbIndex) {
++            // Both sticks turned up together (both in at boot): the first one
++            // is already on its way, so this one waits for its button.
++            continue;
++        }
++        browseUsb(usbIndex);
++    }
++}
++
++void LibraryControl::slotRekordboxDevicePlaylistsReady() {
++    if (!m_rootAwaitingPlaylists) {
++        return; // a parse for a stick the sidebar is not waiting on
++    }
++    if (m_rootedUsb == 0 || !m_rootedDeviceIndex.isValid() ||
++            !m_pSidebarWidget) {
++        m_rootAwaitingPlaylists = false;
++        return;
++    }
++    SidebarModel* pSidebarModel = m_pLibrary->sidebarModel();
++    const QModelIndex deviceIndex(m_rootedDeviceIndex);
++    if (pSidebarModel->rowCount(deviceIndex) == 0) {
++        return; // a different stick's parse finished; keep waiting
++    }
++    m_rootAwaitingPlaylists = false;
++    // The parse attached the playlists on a worker thread without telling the
++    // model's views, so the view rooted here is still showing the empty list
++    // it laid out when the stick was rooted. Re-applying the root makes it lay
++    // out again. This is what used to take two more presses: one that
++    // un-rooted (showing the whole Mixxx tree) and one that rooted again.
++    m_pSidebarWidget->setRootIndex(deviceIndex);
++    const QModelIndex firstChild = pSidebarModel->index(0, 0, deviceIndex);
++    if (firstChild.isValid()) {
++        m_pSidebarWidget->selectIndex(firstChild);
+     }
+ }
+ 
+@@ -2224,14 +2359,13 @@ QString LibraryControl::usbMountPath(int usbIndex) {
+                            : QStringLiteral("/media/USBB");
+ }
+ 
+-void LibraryControl::browseToggleUsb(int usbIndex) {
++void LibraryControl::browseUsb(int usbIndex) {
+     if (!m_pSidebarWidget) {
+         return;
+     }
+-    if (m_rootedUsb == usbIndex) {
+-        restoreSidebarRoot();
+-        return;
+-    }
++    // A press on the stick already shown no longer un-roots the sidebar --
++    // that exposed the full Mixxx tree. It falls through and re-roots, which
++    // takes the list back to the top of the stick, like a CDJ's source button.
+     const QString deviceName = (usbIndex == 1)
+             ? QStringLiteral("USBA")
+             : QStringLiteral("USBB");
+@@ -2249,6 +2383,7 @@ void LibraryControl::browseToggleUsb(int usbIndex) {
+     m_pSidebarWidget->setRootIndex(deviceIndex);
+     m_rootedDeviceIndex = QPersistentModelIndex(deviceIndex);
+     m_rootedUsb = usbIndex;
++    m_rootAwaitingPlaylists = false;
+     SidebarModel* pSidebarModel = m_pLibrary->sidebarModel();
+     connect(pSidebarModel,
+             &QAbstractItemModel::rowsRemoved,
+@@ -2261,7 +2396,9 @@ void LibraryControl::browseToggleUsb(int usbIndex) {
+             &LibraryControl::validateSidebarRoot,
+             Qt::UniqueConnection);
+     if (pSidebarModel->rowCount(deviceIndex) == 0) {
+-        // Playlists parse lazily on first activation (async)
++        // Playlists parse lazily on first activation (async);
++        // slotRekordboxDevicePlaylistsReady() shows them when they land.
++        m_rootAwaitingPlaylists = true;
+         pSidebarModel->clicked(deviceIndex);
+     }
+     const QModelIndex firstChild = pSidebarModel->index(0, 0, deviceIndex);
+@@ -2313,8 +2450,8 @@ void LibraryControl::slotPendingUsbRetry() {
+     const int usbIndex = m_pendingUsb;
+     if (m_rootedUsb == usbIndex) {
+         // Something else already rooted the sidebar where this press wanted to
+-        // go. Completing now would hit browseToggleUsb()'s toggle branch and
+-        // un-root it, turning a satisfied request into a surprise.
++        // go. Completing now would re-root it and throw away wherever the user
++        // has browsed to since, turning a satisfied request into a surprise.
+         clearPendingUsb();
+         return;
+     }
+@@ -2327,7 +2464,7 @@ void LibraryControl::slotPendingUsbRetry() {
+         return; // keep waiting; the timeout gives up eventually
+     }
+     clearPendingUsb();
+-    browseToggleUsb(usbIndex);
++    browseUsb(usbIndex);
+ }
+ 
+ QModelIndex LibraryControl::findRekordboxDeviceIndex(
+@@ -2360,13 +2497,14 @@ QModelIndex LibraryControl::findRekordboxDeviceIndex(
+         // the stick was mounted after the last scan -- the device list only
+         // refreshes on activation, which used to make a stick that was
+         // plugged in later invisible until the Rekordbox root was clicked
+-        // in the full tree. Trigger a rescan via the model's clicked()
+-        // handler. The scan runs on a worker thread (QtConcurrent) and
++        // in the full tree. Trigger a silent rescan (not the feature's
++        // activate(), which also shows the Rekordbox help page). The scan
++        // runs on a worker thread (QtConcurrent) and
+         // onRekordboxDevicesFound applies it incrementally (already-listed
+         // devices are kept), so this call still returns empty-handed -- the
+         // caller arms a pending request and completes when the scan lands.
+         if (primeScan) {
+-            pSidebarModel->clicked(featureIndex);
++            refreshRekordboxDevices();
+         }
+         return QModelIndex(); // Rekordbox found but device absent (yet)
+     }
+@@ -2377,15 +2515,31 @@ void LibraryControl::restoreSidebarRoot() {
+     clearPendingUsb();
+     m_rootedUsb = 0;
+     m_rootedDeviceIndex = QPersistentModelIndex();
++    m_rootAwaitingPlaylists = false;
+     if (m_pSidebarWidget) {
+-        m_pSidebarWidget->setRootIndex(QModelIndex());
++        // The stick list: just the USBA / USBB rows, or nothing at all when
++        // no stick is in. Only if the Rekordbox feature has been switched off
++        // in mixxx.cfg is this the full tree.
++        m_pSidebarWidget->setRootIndex(rekordboxFeatureIndex());
+     }
+     updateUsbStateControls();
+ }
+ 
+ void LibraryControl::validateSidebarRoot() {
+-    if (m_rootedUsb != 0 && !m_rootedDeviceIndex.isValid()) {
+-        restoreSidebarRoot();
++    if (m_rootedUsb != 0) {
++        if (!m_rootedDeviceIndex.isValid()) {
++            restoreSidebarRoot();
++        }
++        return;
++    }
++    // A model reset drops the view's root back to the full tree. Put the stick
++    // list back -- without restoreSidebarRoot()'s clearing of a pending
++    // browse, which the same reset may be about to complete.
++    if (m_pSidebarWidget && !m_pSidebarWidget->rootIndex().isValid()) {
++        const QModelIndex stickList = rekordboxFeatureIndex();
++        if (stickList.isValid()) {
++            m_pSidebarWidget->setRootIndex(stickList);
++        }
+     }
+ }
+ 
+diff --git a/src/library/librarycontrol.h b/src/library/librarycontrol.h
+index e5a6580..94af814 100644
+--- a/src/library/librarycontrol.h
++++ b/src/library/librarycontrol.h
+@@ -16,6 +16,7 @@ class ControlObject;
+ class ControlPushButton;
+ class Library;
+ class LibraryControl;
++class RekordboxFeature;
+ class WLibrary;
+ class WLibrarySidebar;
+ class WSearchLineEdit;
+@@ -130,14 +131,14 @@ class LibraryControl : public QObject {
+     void zoomWaveforms(double v);
+ 
+     // Pioneered touch-browse: USB A/B buttons.
+-    // Short press (<600ms) toggles browse-rooting at the Rekordbox device;
+-    // holding 5s ejects the stick (with accelerating red/white flash).
++    // Short press (<600ms) roots the sidebar at the Rekordbox device (a press
++    // on the stick already shown goes back to its top); holding 5s ejects the stick (with accelerating red/white flash).
+     void slotGotoUsb(int usbIndex, double v);
+     void slotUsbButtonPress(int usbIndex);
+     void slotUsbButtonRelease(int usbIndex);
+     void slotHoldFlashTick();
+     void stopDecksPlayingFromUsb(int usbIndex);
+-    void browseToggleUsb(int usbIndex);
++    void browseUsb(int usbIndex);
+     void startEject(int usbIndex);
+     void unloadDecksFromUsb(int usbIndex);
+     void tryUmount(int usbIndex, const QString& mountPath);
+@@ -152,8 +153,20 @@ class LibraryControl : public QObject {
+     /// kicked off (the scan is what makes a just-inserted stick visible).
+     QModelIndex findRekordboxDeviceIndex(
+             const QString& deviceName, bool primeScan);
++    /// Root the sidebar at the stick list (the Rekordbox feature's devices)
++    /// rather than the full Mixxx tree, which never appears on this UI.
+     void restoreSidebarRoot();
+     void validateSidebarRoot();
++    RekordboxFeature* rekordboxFeature() const;
++    QModelIndex rekordboxFeatureIndex() const;
++    /// Pioneered USB auto-load: a rekordbox stick appearing at /media/USBA or
++    /// /media/USBB is browsed straight away -- no button press -- and one that
++    /// disappears is dropped from the device list.
++    void slotPollUsbMounts();
++    static bool isRekordboxStickMounted(int usbIndex);
++    /// Re-apply the sidebar root once the rooted stick's playlists exist, so
++    /// the view shows them without the user having to press the button again.
++    void slotRekordboxDevicePlaylistsReady();
+     /// Pioneered one-tap USB: a press that arrives before the device scan has
+     /// listed the stick remembers what it wanted here, and completes as soon
+     /// as the scan reports the device, instead of doing nothing and making the
+@@ -217,7 +230,14 @@ class LibraryControl : public QObject {
+     bool m_holdLockedBannerShown = false;
+     int m_ejectAttemptsLeft = 0;
+     QPersistentModelIndex m_rootedDeviceIndex;
+-    int m_rootedUsb = 0; // 0 = full tree, 1 = USBA, 2 = USBB
++    int m_rootedUsb = 0; // 0 = stick list, 1 = USBA, 2 = USBB
++    // The sidebar was rooted at a stick whose playlists were still being
++    // parsed, so the view has to be refreshed when they land.
++    bool m_rootAwaitingPlaylists = false;
++    // USB auto-load: 1 s poll of the two mount points, and the last state
++    // acted on for each (index 0 = USBA, 1 = USBB).
++    QTimer m_usbMountPollTimer;
++    bool m_usbMounted[2] = {false, false};
+     // One-tap USB: slot whose browse is waiting on the async device scan
+     // (0 = nothing pending), and the timeout that gives up on a stick that
+     // never appears so a stale request cannot fire much later.
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+index 9f533ab..51f06af 100644
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -1721,18 +1721,33 @@ void RekordboxFeature::refreshLibraryModels() {
+ void RekordboxFeature::activate() {
+     qDebug() << "RekordboxFeature::activate()";
+ 
+-    // Let a worker thread do the XML parsing
+-    m_devicesFuture = QtConcurrent::run(findRekordboxDevices);
+-    m_devicesFutureWatcher.setFuture(m_devicesFuture);
+-    m_title = tr("(loading) Rekordbox");
+-    //calls a slot in the sidebar model such that 'Rekordbox (isLoading)' is displayed.
+-    emit featureIsLoading(this, true);
++    startDeviceScan(false);
+ 
+     emit enableCoverArtDisplay(true);
+     emit switchToView("REKORDBOXHOME");
+     emit disableSearch();
+ }
+ 
++void RekordboxFeature::rescanDevices() {
++    if (m_devicesFuture.isRunning()) {
++        m_deviceRescanQueued = true;
++        return;
++    }
++    startDeviceScan(true);
++}
++
++void RekordboxFeature::startDeviceScan(bool silent) {
++    m_silentDeviceScan = silent;
++    // Let a worker thread do the XML parsing
++    m_devicesFuture = QtConcurrent::run(findRekordboxDevices);
++    m_devicesFutureWatcher.setFuture(m_devicesFuture);
++    if (!silent) {
++        m_title = tr("(loading) Rekordbox");
++        //calls a slot in the sidebar model such that 'Rekordbox (isLoading)' is displayed.
++        emit featureIsLoading(this, true);
++    }
++}
++
+ void RekordboxFeature::activateChild(const QModelIndex& index) {
+     if (!index.isValid()) {
+         return;
+@@ -1863,7 +1878,16 @@ void RekordboxFeature::onRekordboxDevicesFound() {
+ 
+     // calls a slot in the sidebarmodel such that 'isLoading' is removed from the feature title.
+     m_title = tr("Rekordbox");
+-    emit featureLoadingFinished(this);
++    if (!m_silentDeviceScan) {
++        // Also selects the feature in the sidebar -- right for a tap on it,
++        // wrong for a background rescan.
++        emit featureLoadingFinished(this);
++    }
++
++    if (m_deviceRescanQueued) {
++        m_deviceRescanQueued = false;
++        startDeviceScan(true);
++    }
+ }
+ 
+ void RekordboxFeature::onTracksFound() {
+@@ -1887,6 +1911,7 @@ void RekordboxFeature::onTracksFound() {
+ 
+     m_pRekordboxPlaylistModel->setPlaylist(devicePlaylist);
+     emit showTrackModel(m_pRekordboxPlaylistModel);
++    emit devicePlaylistsReady();
+ 
+     // Re-dispatch the tap that arrived while this parse was running. Queued via
+     // the event loop so m_tracksFuture is settled and activateChild() sees
+diff --git a/src/library/rekordbox/rekordboxfeature.h b/src/library/rekordbox/rekordboxfeature.h
+index 1ae5976..3d560c3 100644
+--- a/src/library/rekordbox/rekordboxfeature.h
++++ b/src/library/rekordbox/rekordboxfeature.h
+@@ -69,6 +69,20 @@ class RekordboxFeature : public BaseExternalLibraryFeature {
+ 
+     TreeItemModel* sidebarModel() const override;
+ 
++    /// Pioneered USB auto-load: rescan /media for rekordbox sticks without
++    /// activate()'s side effects -- it switches the library pane to the
++    /// Rekordbox help page and selects the feature in the sidebar, neither of
++    /// which a stick being plugged in or pulled out should do. A request made
++    /// while a scan is running is queued behind it rather than dropped, since
++    /// the running scan may have looked at /media before the new mount.
++    void rescanDevices();
++
++  signals:
++    /// A device's database parse has finished and its playlists are attached
++    /// to its sidebar row. The worker thread attaches them without model
++    /// notifications, so a view rooted at that row has to be told to re-read.
++    void devicePlaylistsReady();
++
+   public slots:
+     void activate() override;
+     void activateChild(const QModelIndex& index) override;
+@@ -81,6 +95,7 @@ class RekordboxFeature : public BaseExternalLibraryFeature {
+ 
+   private:
+     QString formatRootViewHtml() const;
++    void startDeviceScan(bool silent);
+     std::unique_ptr<BaseSqlTableModel> createPlaylistModelForPlaylist(
+             const QString& playlist) override;
+ 
+@@ -95,6 +110,10 @@ class RekordboxFeature : public BaseExternalLibraryFeature {
+     // re-dispatched from onTracksFound(). Persistent so that a device removed
+     // in the meantime invalidates instead of dangling.
+     QPersistentModelIndex m_queuedActivateChild;
++    // The device scan in flight came from rescanDevices(): finish it without
++    // selecting the feature. And a rescan was asked for while it ran.
++    bool m_silentDeviceScan = false;
++    bool m_deviceRescanQueued = false;
+     QString m_title;
+ 
+     QSharedPointer<BaseTrackCache> m_trackSource;

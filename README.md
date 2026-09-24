@@ -28,7 +28,11 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
 
 ### Patched Mixxx (mixxx-patch/, prebuilt in Releases)
 * **USB workflow like a real XDJ**
-  * One-tap browse of rekordbox USB sticks (USB A / USB B buttons)
+  * Plug in a rekordbox stick and it opens by itself, straight to its
+    playlists — no button press. The USB A / USB B buttons switch between
+    sticks, and a press on the open stick goes back to its top
+  * The library sidebar only ever shows your sticks, never Mixxx's own
+    folders (Tracks, Auto DJ, Crates, Computer...)
   * Hold a USB button ~5 s to safely eject: playing decks block the eject
     ("USB LOCKED"), paused decks are auto-unloaded, and the stick is unmounted
     so it is safe to pull
@@ -223,9 +227,9 @@ automatically.
 
 ## Using the console
 
-* **Short-press USB A/B**: browse that stick — one press, even on a stick you
-  just plugged in (the press waits out the device scan and opens the stick as
-  soon as it appears). **Hold ~5 s**: eject; safe to pull when
+* **Plugging in a stick** opens it: its playlists appear within a second or
+  two, no press needed. **Short-press USB A/B**: switch to that stick (a press
+  on the stick already open goes back to its top). **Hold ~5 s**: eject; safe to pull when
   its playlists disappear. "USB LOCKED" means a deck is *playing* from that
   stick — pause it first.
 * **Key traffic light**: green Key cells are harmonically compatible with the

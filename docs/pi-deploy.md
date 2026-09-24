@@ -54,6 +54,8 @@ with flock; without it, two sticks inserted simultaneously both grabbed
 - USB sticks must mount at /media/USBA and /media/USBB (udev scripts).
 - On an unpatched Mixxx the skin still works; USB buttons are inert.
 - A USB A/B press for a stick that is not yet in Mixxx's device list (fresh boot, or the stick was plugged in after the last scan) primes an async rescan and then completes itself: the press is remembered and jumps to the device's playlists as soon as the scan reports it, so one press is enough. It used to take two. The pending press is dropped if you press again, eject, or leave the sidebar rooted elsewhere, and it gives up after 10 s if the stick never appears.
+- A rekordbox stick (one with `PIONEER/rekordbox/export.pdb`) is opened automatically when it mounts: Mixxx polls /media/USBA and /media/USBB once a second and treats a newly mounted stick as a USB A/B press. A stick already in at boot opens once the skin is up. If both appear at once, only the first opens. A stick pulled without an eject drops out of the device list on the next poll.
+- The sidebar never shows the stock Mixxx tree: with no stick open it lists only the inserted sticks (empty when there are none), and a USB A/B press on the stick that is already open goes back to its top instead of closing it.
 
 ## Ejecting USB sticks (hold-to-eject)
 - Hold USB A/USB B ~5 s: the button flashes red/white, speeding up; at 5 s the

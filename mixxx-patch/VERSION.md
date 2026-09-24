@@ -29,6 +29,9 @@
    reflecting the track's content, like Pioneer hardware. total_gain still drives
    the audio path; the /2 EnginePregain compensation via `getGain()` is retained.
    Touches `src/waveform/renderers/waveformwidgetrenderer.cpp`.
+   r36 (2026-09-24) raises `WaveformWidgetRenderer::s_waveformMaxZoom` from
+   10.0 to 15.0 so the mouse wheel and the Overview-tab BROWSE encoder can
+   zoom the waveforms out further (the encoder clamps to the same constant).
 4. `library-ui.patch` (added 2026-07-11) — "Tracks visible in list" zoom
    preference (`[Library] VisibleRows`, default 8), rekordbox lists always
    open sorted by # ascending, Pioneer-style key traffic light vs the master
@@ -652,9 +655,76 @@
       button still turns it off for the rest of the session. Done in the
       mapping rather than in `QuantizeControl` so that Mixxx's own default,
       which its sync and hotcue tests are written against, is untouched.
+    * **A track loads with no loop** (added 2026-09-24). "Sometimes a track
+      loads and halfway through there's a loop that keeps looping."
+      `BaseTrackPlayerImpl::loadTrack()` armed the track's lowest-numbered
+      loop cue on every load: the volatile loop `unloadTrack()` saves
+      (hot cue index -1, whatever loop was set when the track was last
+      ejected, even one that had been exited), or else the first rekordbox
+      memory loop, which `rekordboxfeature.cpp` imports as a loop hot cue.
+      It came up set but not running, drawn in dark orange, and one of two
+      presses turned it into a trap. RELOOP/EXIT (`reloop_toggle`) enables
+      a loop ahead of the play head without jumping, so the deck is caught
+      when it gets there. LOOP IN anywhere before it kept the old out point
+      and started a loop from there to the middle of the track. The restore
+      is gone, so a loaded track has no loop. A deck cloned from another
+      deck still copies that deck's loop, saved loops stay on their hot cue
+      pads, and `unloadTrack()` still saves the volatile loop cue, which
+      nothing reads back any more.
+    * **With no loop running, LOOP IN starts a new loop** (added
+      2026-09-24). The same stale-out-point trap still happened within a
+      session after a loop was exited with RELOOP/EXIT. `slotLoopIn()` now
+      drops the old out point when the loop is not enabled, before it sets
+      the in point, so IN only arms the in point and OUT decides the end, as
+      on a Pioneer player. IN/OUT on a running loop, LOOP OUT on its own
+      (loop from the cue point, `xdj-behavior.patch`) and RELOOP/EXIT on a
+      loop set in this session are unchanged. New tests:
+      `LoopingControlTest.LoopInButton_StartsNewLoopWhileLoopDisabled` and
+      `HotcueControlTest.LoadTrackDoesNotRestoreLoop`. No existing test
+      reads a loop back after a load or presses IN on an exited loop, so
+      none move.
     Touches `src/engine/controls/loopingcontrol.cpp`,
+    `src/mixer/basetrackplayer.cpp`,
     `src/test/looping_control_test.cpp`,
+    `src/test/hotcuecontrol_test.cpp`,
     `res/controllers/Pioneer-DDJ-400-script.js`. Skin side: `deck.xml`,
     `waveform.xml`, `style.qss` — everything to do with loops is Pioneer
     orange (`#ff8c00`, `#c06800` when the loop is set but not running)
     instead of the play button's green.
+28. `usb-auto-load.patch` (added 2026-09-24, r36) — a rekordbox stick opens
+    by itself when plugged in, and the stock Mixxx sidebar tree is never
+    shown.
+    * **Auto-load.** `LibraryControl` polls `/media/USBA` and `/media/USBB`
+      once a second (`QStorageInfo` plus a check for
+      `PIONEER/rekordbox/export.pdb`). A slot that newly holds a stick goes
+      through `browseUsb()`, the same path as a button press, including the
+      one-tap pending request while the device scan runs. A stick in at boot
+      is picked up on the first tick after the skin has bound the sidebar. A
+      new stick waits while a USB hold or eject is running; if both appear in
+      the same tick, only the first is opened. A slot that stops being
+      mounted (pulled without an eject) triggers a device rescan, so its row
+      and a sidebar rooted at it go away.
+    * **Playlists appear on the first press.** `parseDeviceDB()` attaches the
+      playlists to the device's `TreeItem` on the worker thread without model
+      notifications, so a sidebar rooted at the still-empty device stayed
+      empty. Getting past that took two more presses: one un-rooted (showing
+      the whole Mixxx tree) and one rooted again. `RekordboxFeature` now emits
+      `devicePlaylistsReady()` from `onTracksFound()`, and `LibraryControl`
+      re-applies the root (`m_rootAwaitingPlaylists`), which makes
+      `QTreeView` lay out again.
+    * **No Mixxx tree.** `restoreSidebarRoot()` roots the sidebar at the
+      Rekordbox feature (just the inserted sticks, or nothing) instead of an
+      invalid index. The same happens once the skin binds the sidebar, and
+      again after a model reset (which drops a view's root). A USB press on
+      the stick that is already open re-roots it (back to its top) instead
+      of toggling it closed. `browseToggleUsb()` is renamed `browseUsb()`.
+      Only with `[Library] ShowRekordboxLibrary=0` does the full tree show.
+    * **Silent rescans.** `RekordboxFeature::rescanDevices()` scans without
+      `activate()`'s side effects: switching the library pane to the
+      Rekordbox help page (`REKORDBOXHOME`) and selecting the feature. A
+      request that arrives mid-scan is queued, not dropped. Every rescan
+      `LibraryControl` starts (one-tap priming, post-eject refresh, pulled
+      stick) now uses it. A tap on the feature still calls `activate()`,
+      but nothing in the Pioneered UI can reach it now.
+    Touches `src/library/librarycontrol.{h,cpp}`,
+    `src/library/rekordbox/rekordboxfeature.{h,cpp}`. Skin side: none.
