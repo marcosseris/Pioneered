@@ -15,19 +15,22 @@ Description: RMX mode - drum pads and rolls in time with the master deck
  for the clap, high-passed noise hat), so there are no sample files to ship
  and nothing depends on the sample rate. A retriggered pad fades its last
  hit out over 3 ms, so fast rolls do not click. The buffer is added to the
- main mix after the crossfader buses, and to the headphones at the cue
- share (the master share arrives with the main mix), so they are always in
+ main mix after the main effects, and to the headphones at the cue share
+ (the master share arrives with the main mix), so they are always in
  the headphones, whatever the CUE buttons and HEADPHONES MIX - for quiet
  practice with the master turned down.
  .
- While [Pioneered],rmx_mode is on, MidiController hands the DDJ-400's BEAT
- FX section to EngineRmx::handleMidi() before the mapping sees it: BEAT <
- KICK, BEAT > SNARE, FX SELECT CLAP, ON/OFF HAT, SHIFT + ON/OFF BUILD,
- LEVEL/DEPTH the roll rate (so it can be swept while a pad is held), SHIFT +
- LEVEL/DEPTH the drum level. This is in C++ rather than in
- Pioneer-DDJ-400-script.js because a stale user copy of the mapping shadows
- the shipped script (see browse-encoder-zoom.patch). With RMX closed the
- buttons go to the mapping, and the Beat FX, as before.
+ The drums have their own input to the effect units ([PioneeredRmx],
+ registered by EngineMixer), and EngineRmx switches it on for Effect Unit 1
+ (the Beat FX) when RMX opens, so the Beat FX is on them whatever CH SELECT
+ says. They go through it once per callback, with a beat length from the
+ drums' own clock for tempo-synced effects, before they reach the
+ headphones; they join the main mix at the end of applyMainEffects(), so a
+ Beat FX on MASTER does not process them a second time. After the last hit
+ EngineRmx keeps returning silent buffers for 10 s, so an echo or reverb
+ tail rings out. The DDJ-400 mapping is untouched: the BEAT FX section
+ drives the Beat FX as before, and the pads are played on the (multi-touch)
+ screen.
  .
  Controls, all [Pioneered]: rmx_mode, rmx_pad1..4 (push), rmx_pad1..4_hit
  (flashes on every hit), rmx_rate (0..5) and rmx_rate_0..5 (radio buttons),
@@ -48,34 +51,8 @@ index 19fcc1c..0b9a7d1 100644
    src/engine/engineobject.cpp
    src/engine/enginepregain.cpp
    src/engine/enginesidechaincompressor.cpp
-diff --git a/src/controllers/midi/midicontroller.cpp b/src/controllers/midi/midicontroller.cpp
-index 6b4829f..7931b00 100644
---- a/src/controllers/midi/midicontroller.cpp
-+++ b/src/controllers/midi/midicontroller.cpp
-@@ -8,6 +8,7 @@
- #include "controllers/midi/midioutputhandler.h"
- #include "controllers/midi/midiutils.h"
- #include "controllers/scripting/legacy/controllerscriptenginelegacy.h"
-+#include "engine/enginermx.h"
- #include "defs_urls.h"
- #include "errordialoghandler.h"
- #include "mixer/playermanager.h"
-@@ -274,6 +275,13 @@ void MidiController::receivedShortMessage(unsigned char status,
- 
-     MidiKey mappingKey(status, control);
-     triggerActivity();
-+
-+    // Pioneered: while RMX mode is open, the DDJ-400's BEAT FX section plays
-+    // the drum pads instead of reaching the mapping.
-+    if (!isLearning() && EngineRmx::handleMidi(getName(), status, control, value)) {
-+        return;
-+    }
-+
-     if (isLearning()) {
-         emit messageReceived(status, control, value);
- 
 diff --git a/src/engine/enginemixer.cpp b/src/engine/enginemixer.cpp
-index 42fdf63..35812d3 100644
+index 42fdf63..15384a4 100644
 --- a/src/engine/enginemixer.cpp
 +++ b/src/engine/enginemixer.cpp
 @@ -13,6 +13,7 @@
@@ -86,7 +63,25 @@ index 42fdf63..35812d3 100644
  #include "engine/enginetalkoverducking.h"
  #include "engine/enginevumeter.h"
  #include "engine/engineworkerscheduler.h"
-@@ -208,6 +209,9 @@ EngineMixer::EngineMixer(
+@@ -53,7 +54,8 @@ EngineMixer::EngineMixer(
+           m_busTalkoverHandle(registerChannelGroup("[BusTalkover]")),
+           m_busCrossfaderLeftHandle(registerChannelGroup("[BusLeft]")),
+           m_busCrossfaderCenterHandle(registerChannelGroup("[BusCenter]")),
+-          m_busCrossfaderRightHandle(registerChannelGroup("[BusRight]")) {
++          m_busCrossfaderRightHandle(registerChannelGroup("[BusRight]")),
++          m_rmxHandle(registerChannelGroup(EngineRmx::kInputGroup)) {
+     pEffectsManager->registerInputChannel(m_mainHandle);
+     pEffectsManager->registerInputChannel(m_headphoneHandle);
+     pEffectsManager->registerOutputChannel(m_mainHandle);
+@@ -64,6 +66,7 @@ EngineMixer::EngineMixer(
+     pEffectsManager->registerInputChannel(m_busCrossfaderLeftHandle);
+     pEffectsManager->registerInputChannel(m_busCrossfaderCenterHandle);
+     pEffectsManager->registerInputChannel(m_busCrossfaderRightHandle);
++    pEffectsManager->registerInputChannel(m_rmxHandle);
+     m_bBusOutputConnected[EngineChannel::LEFT] = false;
+     m_bBusOutputConnected[EngineChannel::CENTER] = false;
+     m_bBusOutputConnected[EngineChannel::RIGHT] = false;
+@@ -208,6 +211,9 @@ EngineMixer::EngineMixer(
      m_pHeadphoneEnabled = new ControlObject(ConfigKey(group, "headEnabled"));
      m_pHeadphoneEnabled->setReadOnly();
  
@@ -96,18 +91,32 @@ index 42fdf63..35812d3 100644
      // Note: the EQ Rack is set in EffectsManager::setupDefaults();
  }
  
-@@ -429,6 +433,10 @@ void EngineMixer::process(const int iBufferSize) {
+@@ -429,6 +435,24 @@ void EngineMixer::process(const int iBufferSize) {
      // Prepare all channels for output
      processChannels(iBufferSize);
  
 +    // Pioneered: RMX drums, after the decks so their beat position is the
-+    // one for this buffer. nullptr while silent.
-+    const CSAMPLE* pRmx = m_pRmx->process(iBufferSize, m_sampleRate);
++    // one for this buffer. nullptr while silent. They go through the Beat
++    // FX on their own input, which is on whatever CH SELECT says, so the
++    // effect is on them on any channel -- and only once: they join the
++    // main mix after the main effects (applyMainEffects()), so a Beat FX
++    // on MASTER does not process them a second time.
++    CSAMPLE* pRmx = m_pRmx->process(iBufferSize, m_sampleRate);
++    if (pRmx && m_pEngineEffectsManager) {
++        m_pEngineEffectsManager->processPostFaderInPlace(
++                m_rmxHandle.handle(),
++                m_mainHandle.handle(),
++                pRmx,
++                iBufferSize,
++                m_sampleRate,
++                m_pRmx->features());
++    }
++    m_pRmxOut = pRmx;
 +
      // Compute headphone mix
      // Head phone left/right mix
      CSAMPLE pflMixGainInHeadphones = 1;
-@@ -478,6 +486,15 @@ void EngineMixer::process(const int iBufferSize) {
+@@ -478,6 +502,15 @@ void EngineMixer::process(const int iBufferSize) {
                      m_sampleRate,
                      headphoneFeatures);
          }
@@ -123,21 +132,22 @@ index 42fdf63..35812d3 100644
      }
  
      // Mix all the talkover enabled channels together.
-@@ -598,6 +615,12 @@ void EngineMixer::process(const int iBufferSize) {
-                 1.0,
-                 iBufferSize);
- 
-+        // Pioneered: RMX drums on the master, after the channel faders and
-+        // the crossfader, like an RMX-1000 in the mixer's send/return.
-+        if (pRmx) {
-+            SampleUtil::add(m_main.data(), pRmx, iBufferSize);
-+        }
+@@ -839,6 +872,13 @@ void EngineMixer::applyMainEffects(int bufferSize) {
+                 CSAMPLE_GAIN_ONE,
+                 false);
+     }
 +
-         MicMonitorMode configuredMicMonitorMode = static_cast<MicMonitorMode>(
-             static_cast<int>(m_pMicMonitorMode->get()));
++    // Pioneered: the RMX drums join the main mix here, after the channel
++    // faders, the crossfader and the main effects, like an RMX-1000 in the
++    // mixer's send/return. They have already been through the Beat FX.
++    if (m_pRmxOut) {
++        SampleUtil::add(m_main.data(), m_pRmxOut, bufferSize);
++    }
+ }
  
+ void EngineMixer::processHeadphones(
 diff --git a/src/engine/enginemixer.h b/src/engine/enginemixer.h
-index 56fae42..3aceedf 100644
+index 56fae42..a545858 100644
 --- a/src/engine/enginemixer.h
 +++ b/src/engine/enginemixer.h
 @@ -3,6 +3,7 @@
@@ -156,20 +166,32 @@ index 56fae42..3aceedf 100644
  
  // The number of channels to pre-allocate in various structures in the
  // engine. Prevents memory allocation in EngineMixer::addChannel.
-@@ -291,6 +293,7 @@ class EngineMixer : public QObject, public AudioSource {
+@@ -291,6 +293,10 @@ class EngineMixer : public QObject, public AudioSource {
      mixxx::SampleBuffer m_talkover;
      mixxx::SampleBuffer m_talkoverHeadphones;
      mixxx::SampleBuffer m_sidechainMix;
 +    std::unique_ptr<EngineRmx> m_pRmx;
++    // This callback's RMX drums, after the Beat FX; nullptr while silent.
++    // applyMainEffects() adds them to the main mix.
++    const CSAMPLE* m_pRmxOut = nullptr;
  
      EngineWorkerScheduler* m_pWorkerScheduler;
      EngineSync* m_pEngineSync;
+@@ -341,6 +347,8 @@ class EngineMixer : public QObject, public AudioSource {
+     const ChannelHandleAndGroup m_busCrossfaderLeftHandle;
+     const ChannelHandleAndGroup m_busCrossfaderCenterHandle;
+     const ChannelHandleAndGroup m_busCrossfaderRightHandle;
++    // Pioneered: the RMX drums' input to the effect units
++    const ChannelHandleAndGroup m_rmxHandle;
+ 
+     // Mix two Mono channels. This is useful for outdoor gigs
+     ControlObject* m_pMainMonoMixdown;
 diff --git a/src/engine/enginermx.cpp b/src/engine/enginermx.cpp
 new file mode 100644
-index 0000000..337b8fe
+index 0000000..3d56fa2
 --- /dev/null
 +++ b/src/engine/enginermx.cpp
-@@ -0,0 +1,695 @@
+@@ -0,0 +1,609 @@
 +#include "engine/enginermx.h"
 +
 +#include <algorithm>
@@ -219,37 +241,15 @@ index 0000000..337b8fe
 +constexpr double kPi = 3.14159265358979323846;
 +constexpr double kTwoPi = 2.0 * kPi;
 +
-+// DDJ-400 BEAT FX section (see Pioneer-DDJ-400.midi.xml).
-+constexpr unsigned char kBeatFxNoteStatus = 0x94;
-+constexpr unsigned char kBeatFxNoteOffStatus = 0x84;
-+constexpr unsigned char kBeatFxCcStatus = 0xB4;
-+constexpr unsigned char kBeatLeft = 0x4A;
-+constexpr unsigned char kBeatRight = 0x4B;
-+constexpr unsigned char kFxSelect = 0x63;
-+constexpr unsigned char kFxSelectShift = 0x64;
-+constexpr unsigned char kOnOff = 0x47;
-+constexpr unsigned char kOnOffShift = 0x43;
-+constexpr unsigned char kLevelDepthMsb = 0x02;
-+constexpr unsigned char kLevelDepthLsb = 0x22;
-+constexpr unsigned char kShift = 0x3F; // on status 0x90 / 0x91
++// How long silent buffers keep going to the Beat FX after the last hit, so
++// an echo or reverb tail is not cut off.
++constexpr double kEffectTailSeconds = 10.0;
 +
-+std::atomic<bool> s_shiftDown[2] = {false, false};
-+
-+void setControl(const QString& item, double value) {
-+    ControlObject* pControl = ControlObject::getControl(
-+            ConfigKey(kGroup, item), ControlFlag::AllowMissingOrInvalid);
-+    if (pControl) {
-+        pControl->set(value);
-+    }
-+}
-+
-+double getControl(const QString& item) {
-+    ControlObject* pControl = ControlObject::getControl(
-+            ConfigKey(kGroup, item), ControlFlag::AllowMissingOrInvalid);
-+    return pControl ? pControl->get() : 0.0;
-+}
++const QString kBeatFxUnitGroup = QStringLiteral("[EffectRack1_EffectUnit1]");
 +
 +} // namespace
++
++const QString EngineRmx::kInputGroup = QStringLiteral("[PioneeredRmx]");
 +
 +EngineRmx::EngineRmx()
 +        : m_buffer(kMaxEngineSamples) {
@@ -357,10 +357,10 @@ index 0000000..337b8fe
 +
 +void EngineRmx::setMode(bool on) {
 +    if (on) {
-+        ensureDeckProxies();
++        ensureConnections();
 +    } else {
-+        // Closing the panel lets go of everything: a pad held on the
-+        // hardware would otherwise keep rolling with nothing on screen.
++        // Closing the panel lets go of everything: a pad still held as the
++        // panel hides would otherwise keep rolling with nothing on screen.
 +        for (auto& pad : m_pads) {
 +            pad.pControl->setAndConfirm(0.0);
 +        }
@@ -371,7 +371,14 @@ index 0000000..337b8fe
 +    m_pMode->setAndConfirm(on ? 1.0 : 0.0);
 +}
 +
-+void EngineRmx::ensureDeckProxies() {
++void EngineRmx::ensureConnections() {
++    // The drums always go through the Beat FX, whatever CH SELECT is set
++    // to. The enable is a persisted control, so this only matters the first
++    // time, but it costs nothing to make sure.
++    ControlObject::set(ConfigKey(kBeatFxUnitGroup,
++                               QStringLiteral("group_%1_enable").arg(kInputGroup)),
++            1.0);
++
 +    if (m_decksReady.load(std::memory_order_acquire)) {
 +        return;
 +    }
@@ -612,7 +619,7 @@ index 0000000..337b8fe
 +    }
 +}
 +
-+const CSAMPLE* EngineRmx::process(int iBufferSize, mixxx::audio::SampleRate sampleRate) {
++CSAMPLE* EngineRmx::process(int iBufferSize, mixxx::audio::SampleRate sampleRate) {
 +    // TODO: remove assumption of stereo buffer (as EngineMixer does)
 +    const SINT frames = iBufferSize / 2;
 +    const double rate = sampleRate.toDouble();
@@ -753,12 +760,18 @@ index 0000000..337b8fe
 +
 +    const double level = m_pLevel->get() / 100.0;
 +    const auto levelGain = static_cast<CSAMPLE_GAIN>(level * level * 0.9);
++    CSAMPLE* pOut = m_buffer.data();
 +    if (!anyVoice) {
 +        m_levelGainOld = levelGain;
-+        return nullptr;
++        if (m_tailFramesLeft <= 0) {
++            return nullptr;
++        }
++        m_tailFramesLeft -= frames;
++        SampleUtil::clear(pOut, iBufferSize);
++        return pOut;
 +    }
++    m_tailFramesLeft = static_cast<SINT>(kEffectTailSeconds * rate);
 +
-+    CSAMPLE* pOut = m_buffer.data();
 +    int nextHit = 0;
 +    for (SINT frame = 0; frame < frames; ++frame) {
 +        while (nextHit < numHits && hits[nextHit].frame <= frame) {
@@ -781,96 +794,19 @@ index 0000000..337b8fe
 +    return pOut;
 +}
 +
-+bool EngineRmx::handleMidi(const QString& deviceName,
-+        unsigned char status,
-+        unsigned char control,
-+        unsigned char value) {
-+    if (!deviceName.contains(QStringLiteral("DDJ-400"), Qt::CaseInsensitive)) {
-+        return false;
-+    }
-+
-+    // SHIFT is only watched, never taken: the mapping needs it too.
-+    if ((status == 0x90 || status == 0x91 || status == 0x80 || status == 0x81) &&
-+            control == kShift) {
-+        s_shiftDown[status & 0x01] = (status & 0xF0) == 0x90 && value > 0;
-+        return false;
-+    }
-+
-+    const bool noteOn = status == kBeatFxNoteStatus;
-+    const bool noteOff = status == kBeatFxNoteOffStatus;
-+    const bool isNote = noteOn || noteOff;
-+    const bool pressed = noteOn && value > 0;
-+
-+    int pad = -1;
-+    if (isNote) {
-+        switch (control) {
-+        case kBeatLeft:
-+            pad = 0;
-+            break;
-+        case kBeatRight:
-+            pad = 1;
-+            break;
-+        case kFxSelect:
-+        case kFxSelectShift:
-+            pad = 2;
-+            break;
-+        case kOnOff:
-+            pad = 3;
-+            break;
-+        default:
-+            break;
-+        }
-+    }
-+
-+    const bool isBuild = isNote && control == kOnOffShift;
-+    const bool isKnob = status == kBeatFxCcStatus &&
-+            (control == kLevelDepthMsb || control == kLevelDepthLsb);
-+    if (pad < 0 && !isBuild && !isKnob) {
-+        return false; // everything else on the unit (the jogs...) as usual
-+    }
-+
-+    if (getControl(QStringLiteral("rmx_mode")) <= 0) {
-+        // Closed. A pad that is still held from before the panel closed was
-+        // already let go by setMode(); its release goes to the mapping as
-+        // usual, which ignores releases on these buttons.
-+        return false;
-+    }
-+
-+    if (pad >= 0) {
-+        setControl(QStringLiteral("rmx_pad%1").arg(pad + 1), pressed ? 1.0 : 0.0);
-+        return true;
-+    }
-+    if (isBuild) {
-+        if (pressed) {
-+            // Start a build, or stop the one that is going.
-+            setControl(QStringLiteral("rmx_build"),
-+                    getControl(QStringLiteral("rmx_build")) > 0 ? 0.0 : 1.0);
-+        }
-+        return true;
-+    }
-+    if (isKnob) {
-+        if (control == kLevelDepthLsb) {
-+            return true; // fine position: the coarse one is plenty here
-+        }
-+        const double position = value / 127.0;
-+        if (s_shiftDown[0] || s_shiftDown[1]) {
-+            setControl(QStringLiteral("rmx_level"), std::round(position * 100.0));
-+        } else {
-+            // Left to right: 1/1, 1/2, 1/4, 1/8, 1/16. 1 SHOT is on the
-+            // screen only - the knob is for rolls.
-+            const int rate = 1 + std::min(kNumRates - 2, static_cast<int>(position * (kNumRates - 1)));
-+            setControl(QStringLiteral("rmx_rate"), rate);
-+        }
-+        return true;
-+    }
-+    return false;
++GroupFeatureState EngineRmx::features() const {
++    GroupFeatureState features;
++    features.beat_length = GroupFeatureBeatLength{
++            m_sampleRate * 60.0 / m_lastBpm, 1.0};
++    features.beat_fraction_buffer_end = m_lastPhase;
++    return features;
 +}
 diff --git a/src/engine/enginermx.h b/src/engine/enginermx.h
 new file mode 100644
-index 0000000..0a13ca0
+index 0000000..18e90e4
 --- /dev/null
 +++ b/src/engine/enginermx.h
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,169 @@
 +#pragma once
 +
 +#include <QObject>
@@ -882,6 +818,7 @@ index 0000000..0a13ca0
 +
 +#include "audio/types.h"
 +#include "control/pollingcontrolproxy.h"
++#include "engine/effects/groupfeaturestate.h"
 +#include "util/samplebuffer.h"
 +#include "util/types.h"
 +
@@ -917,36 +854,30 @@ index 0000000..0a13ca0
 +///   rmx_bpm         the tempo the drums follow
 +///   rmx_beat        1 for the first part of every beat (a beat light)
 +///
-+/// On the DDJ-400, while rmx_mode is 1, the BEAT FX section plays the pads
-+/// instead of driving the Beat FX (see handleMidi()).
++/// The drums have their own input to the Beat FX (Effect Unit 1,
++/// kInputGroup), which is switched on whatever the CH SELECT switch says,
++/// so the LEVEL/DEPTH knob puts echo or reverb on them on any channel.
 +class EngineRmx : public QObject {
 +    Q_OBJECT
 +  public:
 +    static constexpr int kNumPads = 4;
 +    static constexpr int kNumRates = 6;
++    /// The drums' input channel to the effect units.
++    static const QString kInputGroup;
 +
 +    EngineRmx();
 +    ~EngineRmx() override;
 +
 +    /// Engine thread. Renders one buffer of drums (interleaved stereo,
 +    /// iBufferSize samples). Returns nullptr while there is nothing to hear,
-+    /// so the mixer can skip the add.
-+    const CSAMPLE* process(int iBufferSize, mixxx::audio::SampleRate sampleRate);
++    /// so the mixer can skip it. After the last hit it keeps returning
++    /// (silent) buffers for a while, so an echo or reverb on the drums can
++    /// ring out.
++    CSAMPLE* process(int iBufferSize, mixxx::audio::SampleRate sampleRate);
 +
-+    /// Controller thread. The DDJ-400's BEAT FX section while RMX is open:
-+    ///   BEAT <      KICK            BEAT >        SNARE
-+    ///   FX SELECT   CLAP            ON/OFF        HAT
-+    ///   SHIFT + ON/OFF   BUILD
-+    ///   LEVEL/DEPTH      roll rate, 1/1 (left) to 1/16 (right)
-+    ///   SHIFT + LEVEL/DEPTH   drum level
-+    /// Done here rather than in Pioneer-DDJ-400-script.js because a stale
-+    /// copy of the mapping in the user mapping folder shadows the shipped
-+    /// script (see browse-encoder-zoom.patch). Returns true when the message
-+    /// was used and must not reach the mapping.
-+    static bool handleMidi(const QString& deviceName,
-+            unsigned char status,
-+            unsigned char control,
-+            unsigned char value);
++    /// Engine thread, after process(): the drums' tempo and beat position,
++    /// for tempo-synced effects such as ECHO.
++    GroupFeatureState features() const;
 +
 +  private:
 +    enum class Sound {
@@ -988,7 +919,7 @@ index 0000000..0a13ca0
 +
 +    void setRate(int rate);
 +    void setMode(bool on);
-+    void ensureDeckProxies();
++    void ensureConnections();
 +
 +    void trigger(int padIndex, CSAMPLE_GAIN gain);
 +    CSAMPLE renderVoice(Voice* pVoice, double sampleRate);
@@ -1024,6 +955,7 @@ index 0000000..0a13ca0
 +    // engine thread state
 +    mixxx::SampleBuffer m_buffer;
 +    double m_sampleRate = 48000.0;
++    SINT m_tailFramesLeft = 0; // silent frames still to give the effects
 +    std::array<bool, 2> m_wasPlaying{};
 +    int m_masterDeck = 0; // 1-based, 0 = none yet
 +    double m_lastBpm = 120.0;

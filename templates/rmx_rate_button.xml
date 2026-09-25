@@ -11,7 +11,7 @@
 <Template>
   <PushButton>
     <ObjectName>RmxRate</ObjectName>
-    <Size>0me,0me</Size>
+    <SizePolicy>me,me</SizePolicy>
     <NumberStates>2</NumberStates>
     <State>
       <Number>0</Number>

@@ -902,9 +902,9 @@
     the query through `slotSetSearchText()` over whatever is selected then. If
     that view has no search (box disabled) the query stays parked. Touches
     `src/widget/wsearchlineedit.{h,cpp}`.
-37. `rmx.patch` (added 2026-09-25, r40) — RMX mode: four drum pads (KICK,
-    SNARE, CLAP, HAT) with beat-locked rolls and a BUILD snare roll, a few of
-    the RMX-1000's X-PAD tricks. New `EngineRmx`
+37. `rmx.patch` (added 2026-09-25, r40; reworked r41) — RMX mode: four drum
+    pads (KICK, SNARE, CLAP, HAT) with beat-locked rolls and a BUILD snare
+    roll, a few of the RMX-1000's X-PAD tricks. New `EngineRmx`
     (`src/engine/enginermx.{h,cpp}`), owned by `EngineMixer` and run once per
     callback right after `processChannels()`, so the master deck's
     `beat_distance` is the one for this buffer. The master deck is the one
@@ -916,21 +916,26 @@
     Buffer-to-buffer phase drift under 0.05 beat is absorbed so no line on a
     buffer boundary is missed or doubled. The drums are synthesised per
     sample (no sample files); a retrigger fades the pad's previous hit over
-    3 ms. The drum buffer is added to `m_main` after the crossfader buses
-    and to `m_head` at `pflMixGainInHeadphones` (the master share comes with
-    the main mix), so they are always in the headphones at a level that does
-    not move with HEADPHONES MIX. **Hardware in C++, not the script:**
-    `MidiController::receivedShortMessage()` offers every message to
-    `EngineRmx::handleMidi()`, which (DDJ-400 only, rmx_mode on) takes BEAT <
-    / > / FX SELECT (and SHIFT + FX SELECT) / ON/OFF as the four pads, SHIFT
-    + ON/OFF as BUILD, LEVEL/DEPTH as the roll rate and SHIFT + LEVEL/DEPTH
-    as the level, before the mapping sees them; it only watches SHIFT
-    (0x90/0x91 0x3F). Controls, all `[Pioneered]`: `rmx_mode`,
-    `rmx_pad1..4`, `rmx_pad1..4_hit`, `rmx_rate`, `rmx_rate_0..5`,
-    `rmx_level`, `rmx_level_down` / `rmx_level_up`, `rmx_build`, `rmx_deck`,
-    `rmx_bpm`, `rmx_beat`. Touches `src/engine/enginemixer.{h,cpp}`,
-    `src/controllers/midi/midicontroller.cpp`, `CMakeLists.txt`, plus the two
-    new files. Skin side: `effects.xml` (RMX button and the "BEAT FX KEYS PLAY
-    PADS" note), `overview.xml` (RMX panel in the waveforms' place), new
-    `rmx.xml`, `templates/rmx_pad.xml`, `templates/rmx_rate_button.xml`,
-    `style.qss` (`#Rmx*`).
+    3 ms.
+    **Beat FX on the drums, whatever CH SELECT says (r41).** `EngineMixer`
+    registers a `[PioneeredRmx]` input channel with the effects manager, and
+    `EngineRmx` sets `[EffectRack1_EffectUnit1],group_[PioneeredRmx]_enable`
+    when RMX opens. The drum buffer goes through `processPostFaderInPlace()`
+    on that input (beat length from the drums' own clock, for tempo-synced
+    effects) before it reaches the headphones (at `pflMixGainInHeadphones`;
+    the master share comes with the main mix) and the main mix. It joins
+    `m_main` at the end of `applyMainEffects()`, so a Beat FX on MASTER does
+    not process it a second time. After the last hit `process()` keeps
+    returning silent buffers for 10 s so echo/reverb tails ring out.
+    r40 also routed the DDJ-400's BEAT FX buttons to the pads while RMX was
+    open (a hook in `MidiController::receivedShortMessage()`); r41 drops
+    that, since the screen is multi-touch, so the BEAT FX section always
+    drives the Beat FX and `midicontroller.cpp` is no longer touched.
+    Controls, all `[Pioneered]`: `rmx_mode`, `rmx_pad1..4`,
+    `rmx_pad1..4_hit`, `rmx_rate`, `rmx_rate_0..5`, `rmx_level`,
+    `rmx_level_down` / `rmx_level_up`, `rmx_build`, `rmx_deck`, `rmx_bpm`,
+    `rmx_beat`. Touches `src/engine/enginemixer.{h,cpp}`, `CMakeLists.txt`,
+    plus the two new files. Skin side: `effects.xml` (RMX button),
+    `overview.xml` (RMX panel in the waveforms' place), new `rmx.xml`,
+    `templates/rmx_pad.xml`, `templates/rmx_rate_button.xml`, `style.qss`
+    (`#Rmx*`).

@@ -1,19 +1,22 @@
 <!--
   RMX mode: a few of the RMX-1000's X-PAD tricks, in place of the waveforms
   while the RMX button under the Color FX is lit ([Pioneered],rmx_mode).
-  The drums are made by the patched Mixxx (rmx.patch) and play on the master
-  and in the headphones.
+  The drums are made by the patched Mixxx (rmx.patch), play on the master
+  and in the headphones, and always go through the Beat FX.
 
     header  what the drums follow: the master deck and its BPM, or FREE when
             no deck is playing, and a light on every beat
-    pads    KICK, SNARE, CLAP, HAT. A tap plays one hit, holding rolls at the
+    pads    KICK, SNARE, CLAP, HAT: a tap plays one hit, holding rolls at the
             ROLL rate, in time with the beat. Each pad lights on every hit.
-            Under each: the DDJ-400 button that plays it while RMX is open.
-    ROLL    1 SHOT (no roll), then 1/1 to 1/16 of a beat. The LEVEL/DEPTH
-            knob sets it too, so it can be swept while a pad is held.
-    BUILD   a two-bar snare roll that speeds up into the drop (SHIFT +
-            ON/OFF on the hardware). Tap again to stop it.
-    LEVEL   the drums' volume (SHIFT + LEVEL/DEPTH on the hardware)
+            BUILD: a two-bar snare roll that speeds up into the drop; tap
+            again to stop it.
+    ROLL    1 SHOT (no roll), then 1/1 to 1/16 of a beat
+    LEVEL   the drums' volume
+
+  The pad row and the ROLL row share the height equally, and five pads
+  against six rates keeps every button about the same size. The screen is
+  multi-touch (every Mixxx widget takes its own touch), so pads can be held
+  together and a rate changed while a pad rolls.
 -->
 <Template>
   <WidgetGroup>
@@ -88,40 +91,46 @@
             <SetVariable name="pad">1</SetVariable>
             <SetVariable name="name">Kick</SetVariable>
             <SetVariable name="label">KICK</SetVariable>
-            <SetVariable name="hardware">&#9664; BEAT</SetVariable>
           </Template>
           <Template src="skin:templates/rmx_pad.xml">
             <SetVariable name="pad">2</SetVariable>
             <SetVariable name="name">Snare</SetVariable>
             <SetVariable name="label">SNARE</SetVariable>
-            <SetVariable name="hardware">BEAT &#9654;</SetVariable>
           </Template>
           <Template src="skin:templates/rmx_pad.xml">
             <SetVariable name="pad">3</SetVariable>
             <SetVariable name="name">Clap</SetVariable>
             <SetVariable name="label">CLAP</SetVariable>
-            <SetVariable name="hardware">FX SELECT</SetVariable>
           </Template>
           <Template src="skin:templates/rmx_pad.xml">
             <SetVariable name="pad">4</SetVariable>
             <SetVariable name="name">Hat</SetVariable>
             <SetVariable name="label">HAT</SetVariable>
-            <SetVariable name="hardware">ON/OFF</SetVariable>
           </Template>
+          <PushButton>
+            <ObjectName>RmxBuild</ObjectName>
+            <SizePolicy>me,me</SizePolicy>
+            <NumberStates>2</NumberStates>
+            <State><Number>0</Number><Text>BUILD</Text></State>
+            <State><Number>1</Number><Text>BUILD</Text></State>
+            <Connection>
+              <ConfigKey persist="false">[Pioneered],rmx_build</ConfigKey>
+            </Connection>
+          </PushButton>
         </Children>
       </WidgetGroup>
 
       <!-- ROLL: radio buttons, one always lit, like the Color FX -->
+      <Label>
+        <ObjectName>RmxCaption</ObjectName>
+        <Size>0me,16f</Size>
+        <Text>ROLL</Text>
+      </Label>
       <WidgetGroup>
-        <ObjectName>RmxRow</ObjectName>
+        <ObjectName>RmxRates</ObjectName>
         <Layout>horizontal</Layout>
-        <Size>0me,40f</Size>
+        <SizePolicy>me,me</SizePolicy>
         <Children>
-          <Label>
-            <ObjectName>RmxRowLabel</ObjectName>
-            <Size>52f,0me</Size>
-            <Text>ROLL</Text>
-          </Label>
           <Template src="skin:templates/rmx_rate_button.xml">
             <SetVariable name="rate">0</SetVariable>
             <SetVariable name="label">1 SHOT</SetVariable>
@@ -149,22 +158,13 @@
         </Children>
       </WidgetGroup>
 
-      <!-- BUILD, then LEVEL - / value / + -->
+      <!-- LEVEL - / value / + -->
       <WidgetGroup>
         <ObjectName>RmxRow</ObjectName>
         <Layout>horizontal</Layout>
         <Size>0me,40f</Size>
         <Children>
-          <PushButton>
-            <ObjectName>RmxBuild</ObjectName>
-            <Size>0me,0me</Size>
-            <NumberStates>2</NumberStates>
-            <State><Number>0</Number><Text>BUILD</Text></State>
-            <State><Number>1</Number><Text>BUILD</Text></State>
-            <Connection>
-              <ConfigKey persist="false">[Pioneered],rmx_build</ConfigKey>
-            </Connection>
-          </PushButton>
+          <WidgetGroup><Size>0me,0min</Size></WidgetGroup>
           <Label>
             <ObjectName>RmxRowLabel</ObjectName>
             <Size>58f,0me</Size>

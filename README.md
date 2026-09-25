@@ -28,12 +28,11 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   the waveforms, a few of the RMX-1000's X-PAD tricks. **KICK**, **SNARE**,
   **CLAP** and **HAT**: tap for one hit, hold to roll in time with the
   master deck at the **ROLL** rate (1/1 to 1/16 beat, or 1 SHOT). **BUILD**
-  plays a two-bar snare roll that speeds up into the drop. The drums play
-  on the master *and* always in the headphones, so you can practise quietly.
-  While RMX is open the DDJ-400's BEAT FX section plays them: BEAT ◀ KICK,
-  BEAT ▶ SNARE, FX SELECT CLAP, ON/OFF HAT, SHIFT + ON/OFF BUILD,
-  LEVEL/DEPTH the roll rate (hold a pad and turn it), SHIFT + LEVEL/DEPTH
-  the drum level
+  plays a two-bar snare roll that speeds up into the drop. Several pads can
+  be held at once on the touchscreen. The drums play on the master *and*
+  always in the headphones, so you can practise quietly, and they always go
+  through the Beat FX (LEVEL/DEPTH adds echo or reverb to them), whatever
+  channel CH SELECT is on
 * Touch-optimized Browse tab: two-pane playlist/track view, one-tap
   **USB A / USB B** source buttons, and full-width deck overviews along the
   bottom (loading is the DDJ-400's own LOAD 1 / LOAD 2 buttons — no duplicate

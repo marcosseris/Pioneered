@@ -88,9 +88,7 @@
         </Children>
       </WidgetGroup>
 
-      <!-- RMX: opens the drum pads in place of the waveforms (rmx.xml).
-           While it is lit the DDJ-400's BEAT FX buttons play the pads, and
-           the note below says so. -->
+      <!-- RMX: opens the drum pads in place of the waveforms (rmx.xml). -->
       <WidgetGroup>
         <ObjectName>ColorFx_Grid</ObjectName>
         <Layout>vertical</Layout>
@@ -105,14 +103,6 @@
               <ConfigKey persist="false">[Pioneered],rmx_mode</ConfigKey>
             </Connection>
           </PushButton>
-          <Label>
-            <ObjectName>RmxBeatFxNote</ObjectName>
-            <Text>BEAT FX KEYS PLAY PADS</Text>
-            <Connection>
-              <ConfigKey persist="false">[Pioneered],rmx_mode</ConfigKey>
-              <BindProperty>visible</BindProperty>
-            </Connection>
-          </Label>
         </Children>
       </WidgetGroup>
     </Children>

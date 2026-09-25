@@ -320,13 +320,6 @@ WPushButton:pressed {
   color: #e5e6ea;
 }
 
-#RmxBeatFxNote {
-  color: #b6294c;
-  font-size: 10px;
-  font-weight: bold;
-  qproperty-alignment: AlignCenter;
-}
-
 #RmxPanel {
   background-color: black;
   border: 2px solid #32323c;
@@ -378,7 +371,7 @@ WPushButton:pressed {
       stop:0 #16161a, stop:1 black);
   border: 2px solid #4a4a52;
   border-radius: 4px;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: bold;
   margin: 3px;
 }
@@ -400,15 +393,16 @@ WPushButton:pressed {
 #RmxPadClap[value="1"] { background-color: #6ee128; color: black; }
 #RmxPadHat[value="1"] { background-color: #2d85cd; color: black; }
 
-#RmxPadHint {
+#RmxRow {
+  padding-top: 2px;
+}
+
+#RmxCaption {
   color: #8f8f99;
   font-size: 11px;
   font-weight: bold;
-  qproperty-alignment: AlignCenter;
-}
-
-#RmxRow {
-  padding-top: 2px;
+  qproperty-alignment: 'AlignLeft | AlignBottom';
+  padding-left: 4px;
 }
 
 #RmxRowLabel {
@@ -420,38 +414,39 @@ WPushButton:pressed {
 }
 
 /* ROLL rates: radio buttons styled as the Color FX ones, lit in the BeatFX
-   blue. */
+   blue, as big as the pads above them. */
 #RmxRate {
   background-color: transparent;
-  border: 1px solid #3c3c46;
-  border-radius: 3px;
+  border: 2px solid #3c3c46;
+  border-radius: 4px;
   color: #8f8f99;
-  font-size: 12px;
+  font-size: 18px;
   font-weight: bold;
-  margin: 2px;
+  margin: 3px;
 }
 
 #RmxRate[value="1"] {
-  border: 2px solid #2d85cd;
+  border: 3px solid #2d85cd;
   color: #2d85cd;
-  margin: 1px;
+  margin: 2px;
 }
 
 #RmxRate[value="0"]:pressed {
   background-color: #2a2a32;
-  border: 1px solid #6a6a76;
+  border: 2px solid #6a6a76;
   color: #e5e6ea;
 }
 
+/* BUILD sits in the pad row, the same size as the pads. */
 #RmxBuild {
   background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
       stop:0 #16161a, stop:1 black);
-  border: 2px solid #4a4a52;
+  border: 2px solid #e5e6ea;
   border-radius: 4px;
-  color: white;
-  font-size: 14px;
+  color: #e5e6ea;
+  font-size: 18px;
   font-weight: bold;
-  margin: 2px 8px 2px 2px;
+  margin: 3px;
 }
 
 #RmxBuild[value="1"] {
