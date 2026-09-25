@@ -24,6 +24,16 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
 * **Color FX buttons** under the Beat FX: **SPACE**, **DUB ECHO**, **NOISE**
   and **FILTER** pick what both FILTER knobs do, as on a Pioneer mixer
   (quiet at the centre, low-pass sweep to the left, high-pass to the right)
+* **RMX mode** (the RMX button under the Color FX): drum pads in place of
+  the waveforms, a few of the RMX-1000's X-PAD tricks. **KICK**, **SNARE**,
+  **CLAP** and **HAT**: tap for one hit, hold to roll in time with the
+  master deck at the **ROLL** rate (1/1 to 1/16 beat, or 1 SHOT). **BUILD**
+  plays a two-bar snare roll that speeds up into the drop. The drums play
+  on the master *and* always in the headphones, so you can practise quietly.
+  While RMX is open the DDJ-400's BEAT FX section plays them: BEAT ◀ KICK,
+  BEAT ▶ SNARE, FX SELECT CLAP, ON/OFF HAT, SHIFT + ON/OFF BUILD,
+  LEVEL/DEPTH the roll rate (hold a pad and turn it), SHIFT + LEVEL/DEPTH
+  the drum level
 * Touch-optimized Browse tab: two-pane playlist/track view, one-tap
   **USB A / USB B** source buttons, and full-width deck overviews along the
   bottom (loading is the DDJ-400's own LOAD 1 / LOAD 2 buttons — no duplicate

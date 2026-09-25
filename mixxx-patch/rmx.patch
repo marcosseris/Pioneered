@@ -1,0 +1,1046 @@
+Description: RMX mode - drum pads and rolls in time with the master deck
+ A few of the RMX-1000's X-PAD tricks for the skin's RMX panel: four drum
+ pads (KICK, SNARE, CLAP, HAT) on the master and in the headphones. A tap
+ plays one hit at once; holding a pad rolls it at the ROLL rate (1/1 to
+ 1/16 of a beat, or 1 SHOT for no roll), with every roll step on the exact
+ sample of the grid line of the master deck (the deck that started playing
+ most recently; with nothing playing the drums run on at the last tempo).
+ BUILD plays a two-bar snare roll that speeds up and gets louder into the
+ drop, starting on the next beat.
+ .
+ New EngineRmx (src/engine/enginermx.{h,cpp}), owned by EngineMixer and run
+ once per callback after the decks, so their beat_distance is the one for
+ this buffer. The drums are synthesised sample by sample (a pitch-swept
+ sine kick, head plus high-passed noise snare, band-passed noise bursts
+ for the clap, high-passed noise hat), so there are no sample files to ship
+ and nothing depends on the sample rate. A retriggered pad fades its last
+ hit out over 3 ms, so fast rolls do not click. The buffer is added to the
+ main mix after the crossfader buses, and to the headphones at the cue
+ share (the master share arrives with the main mix), so they are always in
+ the headphones, whatever the CUE buttons and HEADPHONES MIX - for quiet
+ practice with the master turned down.
+ .
+ While [Pioneered],rmx_mode is on, MidiController hands the DDJ-400's BEAT
+ FX section to EngineRmx::handleMidi() before the mapping sees it: BEAT <
+ KICK, BEAT > SNARE, FX SELECT CLAP, ON/OFF HAT, SHIFT + ON/OFF BUILD,
+ LEVEL/DEPTH the roll rate (so it can be swept while a pad is held), SHIFT +
+ LEVEL/DEPTH the drum level. This is in C++ rather than in
+ Pioneer-DDJ-400-script.js because a stale user copy of the mapping shadows
+ the shipped script (see browse-encoder-zoom.patch). With RMX closed the
+ buttons go to the mapping, and the Beat FX, as before.
+ .
+ Controls, all [Pioneered]: rmx_mode, rmx_pad1..4 (push), rmx_pad1..4_hit
+ (flashes on every hit), rmx_rate (0..5) and rmx_rate_0..5 (radio buttons),
+ rmx_level (0..100) with rmx_level_down / rmx_level_up, rmx_build, and the
+ read-only rmx_deck, rmx_bpm and rmx_beat for the panel's header.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 19fcc1c..0b9a7d1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -867,6 +867,7 @@ add_library(mixxx-lib STATIC EXCLUDE_FROM_ALL
+   src/engine/enginebuffer.cpp
+   src/engine/enginedelay.cpp
+   src/engine/enginemixer.cpp
++  src/engine/enginermx.cpp
+   src/engine/engineobject.cpp
+   src/engine/enginepregain.cpp
+   src/engine/enginesidechaincompressor.cpp
+diff --git a/src/controllers/midi/midicontroller.cpp b/src/controllers/midi/midicontroller.cpp
+index 6b4829f..7931b00 100644
+--- a/src/controllers/midi/midicontroller.cpp
++++ b/src/controllers/midi/midicontroller.cpp
+@@ -8,6 +8,7 @@
+ #include "controllers/midi/midioutputhandler.h"
+ #include "controllers/midi/midiutils.h"
+ #include "controllers/scripting/legacy/controllerscriptenginelegacy.h"
++#include "engine/enginermx.h"
+ #include "defs_urls.h"
+ #include "errordialoghandler.h"
+ #include "mixer/playermanager.h"
+@@ -274,6 +275,13 @@ void MidiController::receivedShortMessage(unsigned char status,
+ 
+     MidiKey mappingKey(status, control);
+     triggerActivity();
++
++    // Pioneered: while RMX mode is open, the DDJ-400's BEAT FX section plays
++    // the drum pads instead of reaching the mapping.
++    if (!isLearning() && EngineRmx::handleMidi(getName(), status, control, value)) {
++        return;
++    }
++
+     if (isLearning()) {
+         emit messageReceived(status, control, value);
+ 
+diff --git a/src/engine/enginemixer.cpp b/src/engine/enginemixer.cpp
+index 42fdf63..35812d3 100644
+--- a/src/engine/enginemixer.cpp
++++ b/src/engine/enginemixer.cpp
+@@ -13,6 +13,7 @@
+ #include "engine/effects/engineeffectsmanager.h"
+ #include "engine/enginebuffer.h"
+ #include "engine/enginedelay.h"
++#include "engine/enginermx.h"
+ #include "engine/enginetalkoverducking.h"
+ #include "engine/enginevumeter.h"
+ #include "engine/engineworkerscheduler.h"
+@@ -208,6 +209,9 @@ EngineMixer::EngineMixer(
+     m_pHeadphoneEnabled = new ControlObject(ConfigKey(group, "headEnabled"));
+     m_pHeadphoneEnabled->setReadOnly();
+ 
++    // Pioneered: RMX mode drum pads
++    m_pRmx = std::make_unique<EngineRmx>();
++
+     // Note: the EQ Rack is set in EffectsManager::setupDefaults();
+ }
+ 
+@@ -429,6 +433,10 @@ void EngineMixer::process(const int iBufferSize) {
+     // Prepare all channels for output
+     processChannels(iBufferSize);
+ 
++    // Pioneered: RMX drums, after the decks so their beat position is the
++    // one for this buffer. nullptr while silent.
++    const CSAMPLE* pRmx = m_pRmx->process(iBufferSize, m_sampleRate);
++
+     // Compute headphone mix
+     // Head phone left/right mix
+     CSAMPLE pflMixGainInHeadphones = 1;
+@@ -478,6 +486,15 @@ void EngineMixer::process(const int iBufferSize) {
+                     m_sampleRate,
+                     headphoneFeatures);
+         }
++
++        // Pioneered: the RMX drums are always in the headphones, whatever
++        // the decks' CUE buttons, so they can be practised on quietly with
++        // the master turned down. They come in at the cue share here and at
++        // the master share with the main mix (processHeadphones), so
++        // HEADPHONES MIX does not change how loud they are.
++        if (pRmx) {
++            SampleUtil::addWithGain(m_head.data(), pRmx, pflMixGainInHeadphones, iBufferSize);
++        }
+     }
+ 
+     // Mix all the talkover enabled channels together.
+@@ -598,6 +615,12 @@ void EngineMixer::process(const int iBufferSize) {
+                 1.0,
+                 iBufferSize);
+ 
++        // Pioneered: RMX drums on the master, after the channel faders and
++        // the crossfader, like an RMX-1000 in the mixer's send/return.
++        if (pRmx) {
++            SampleUtil::add(m_main.data(), pRmx, iBufferSize);
++        }
++
+         MicMonitorMode configuredMicMonitorMode = static_cast<MicMonitorMode>(
+             static_cast<int>(m_pMicMonitorMode->get()));
+ 
+diff --git a/src/engine/enginemixer.h b/src/engine/enginemixer.h
+index 56fae42..3aceedf 100644
+--- a/src/engine/enginemixer.h
++++ b/src/engine/enginemixer.h
+@@ -3,6 +3,7 @@
+ #include <QObject>
+ #include <QVarLengthArray>
+ #include <atomic>
++#include <memory>
+ 
+ #include "audio/types.h"
+ #include "control/controlobject.h"
+@@ -27,6 +28,7 @@ class EngineEffectsManager;
+ class EngineSync;
+ class EngineTalkoverDucking;
+ class EngineDelay;
++class EngineRmx;
+ 
+ // The number of channels to pre-allocate in various structures in the
+ // engine. Prevents memory allocation in EngineMixer::addChannel.
+@@ -291,6 +293,7 @@ class EngineMixer : public QObject, public AudioSource {
+     mixxx::SampleBuffer m_talkover;
+     mixxx::SampleBuffer m_talkoverHeadphones;
+     mixxx::SampleBuffer m_sidechainMix;
++    std::unique_ptr<EngineRmx> m_pRmx;
+ 
+     EngineWorkerScheduler* m_pWorkerScheduler;
+     EngineSync* m_pEngineSync;
+diff --git a/src/engine/enginermx.cpp b/src/engine/enginermx.cpp
+new file mode 100644
+index 0000000..337b8fe
+--- /dev/null
++++ b/src/engine/enginermx.cpp
+@@ -0,0 +1,695 @@
++#include "engine/enginermx.h"
++
++#include <algorithm>
++#include <cmath>
++
++#include "control/controlobject.h"
++#include "control/controlpotmeter.h"
++#include "control/controlpushbutton.h"
++#include "moc_enginermx.cpp"
++#include "util/defs.h"
++#include "util/sample.h"
++
++namespace {
++
++const QString kGroup = QStringLiteral("[Pioneered]");
++
++// Roll step per rate index, in beats. Index 0 is 1 SHOT: no roll.
++constexpr std::array<double, EngineRmx::kNumRates> kRateBeats = {
++        0.0, 1.0, 0.5, 0.25, 0.125, 0.0625};
++constexpr int kDefaultRate = 3; // 1/4
++constexpr double kDefaultLevel = 80.0;
++constexpr double kLevelStep = 10.0;
++
++// How long a pad stays lit after a hit.
++constexpr double kHitLightSeconds = 0.08;
++// Retrigger fade-out of a pad's previous hit, so a roll does not click.
++constexpr double kRetriggerFadeSeconds = 0.003;
++
++// BUILD: a snare roll over two bars (eight beats) that speeds up and gets
++// louder into the drop, which lands on the beat after it ends.
++constexpr double kBuildBeats = 8.0;
++double buildStepAt(double pos) {
++    if (pos < 4.0) {
++        return 0.5;
++    }
++    if (pos < 6.0) {
++        return 0.25;
++    }
++    if (pos < 7.0) {
++        return 0.125;
++    }
++    return 0.0625;
++}
++constexpr CSAMPLE_GAIN kBuildStartGain = 0.45f;
++constexpr int kBuildPad = 1; // SNARE
++
++constexpr double kPi = 3.14159265358979323846;
++constexpr double kTwoPi = 2.0 * kPi;
++
++// DDJ-400 BEAT FX section (see Pioneer-DDJ-400.midi.xml).
++constexpr unsigned char kBeatFxNoteStatus = 0x94;
++constexpr unsigned char kBeatFxNoteOffStatus = 0x84;
++constexpr unsigned char kBeatFxCcStatus = 0xB4;
++constexpr unsigned char kBeatLeft = 0x4A;
++constexpr unsigned char kBeatRight = 0x4B;
++constexpr unsigned char kFxSelect = 0x63;
++constexpr unsigned char kFxSelectShift = 0x64;
++constexpr unsigned char kOnOff = 0x47;
++constexpr unsigned char kOnOffShift = 0x43;
++constexpr unsigned char kLevelDepthMsb = 0x02;
++constexpr unsigned char kLevelDepthLsb = 0x22;
++constexpr unsigned char kShift = 0x3F; // on status 0x90 / 0x91
++
++std::atomic<bool> s_shiftDown[2] = {false, false};
++
++void setControl(const QString& item, double value) {
++    ControlObject* pControl = ControlObject::getControl(
++            ConfigKey(kGroup, item), ControlFlag::AllowMissingOrInvalid);
++    if (pControl) {
++        pControl->set(value);
++    }
++}
++
++double getControl(const QString& item) {
++    ControlObject* pControl = ControlObject::getControl(
++            ConfigKey(kGroup, item), ControlFlag::AllowMissingOrInvalid);
++    return pControl ? pControl->get() : 0.0;
++}
++
++} // namespace
++
++EngineRmx::EngineRmx()
++        : m_buffer(kMaxEngineSamples) {
++    m_buffer.clear();
++
++    m_pMode = std::make_unique<ControlPushButton>(ConfigKey(kGroup, QStringLiteral("rmx_mode")));
++    m_pMode->setButtonMode(ControlPushButton::TOGGLE);
++    m_pMode->connectValueChangeRequest(
++            this,
++            [this](double value) {
++                setMode(value > 0);
++            },
++            Qt::DirectConnection);
++
++    for (int i = 0; i < kNumPads; ++i) {
++        Pad& pad = m_pads[i];
++        const QString name = QStringLiteral("rmx_pad%1").arg(i + 1);
++        pad.pControl = std::make_unique<ControlPushButton>(ConfigKey(kGroup, name));
++        pad.pControl->connectValueChangeRequest(
++                this,
++                [this, i](double value) {
++                    // A press shorter than one buffer still counts.
++                    if (value > 0) {
++                        m_pads[i].pressSerial.fetch_add(1);
++                    }
++                    m_pads[i].pControl->setAndConfirm(value > 0 ? 1.0 : 0.0);
++                },
++                Qt::DirectConnection);
++        pad.pHit = std::make_unique<ControlObject>(
++                ConfigKey(kGroup, name + QStringLiteral("_hit")));
++        pad.pHit->setReadOnly();
++    }
++
++    m_pRate = std::make_unique<ControlObject>(ConfigKey(kGroup, QStringLiteral("rmx_rate")));
++    m_pRate->connectValueChangeRequest(
++            this,
++            [this](double value) {
++                setRate(static_cast<int>(std::lround(value)));
++            },
++            Qt::DirectConnection);
++    for (int i = 0; i < kNumRates; ++i) {
++        m_rateButtons[i] = std::make_unique<ControlObject>(
++                ConfigKey(kGroup, QStringLiteral("rmx_rate_%1").arg(i)));
++        m_rateButtons[i]->connectValueChangeRequest(
++                this,
++                [this, i](double value) {
++                    // A request for 0 is a tap on the lit rate: one rate is
++                    // always selected, so it stays lit.
++                    if (value > 0) {
++                        setRate(i);
++                    }
++                },
++                Qt::DirectConnection);
++    }
++    setRate(kDefaultRate);
++
++    m_pLevel = std::make_unique<ControlPotmeter>(
++            ConfigKey(kGroup, QStringLiteral("rmx_level")), 0.0, 100.0);
++    m_pLevel->setDefaultValue(kDefaultLevel);
++    m_pLevel->set(kDefaultLevel);
++    m_pLevelDown = std::make_unique<ControlPushButton>(
++            ConfigKey(kGroup, QStringLiteral("rmx_level_down")));
++    connect(m_pLevelDown.get(), &ControlObject::valueChanged, this, [this](double value) {
++        if (value > 0) {
++            m_pLevel->set(std::max(0.0, std::round(m_pLevel->get() - kLevelStep)));
++        }
++    });
++    m_pLevelUp = std::make_unique<ControlPushButton>(
++            ConfigKey(kGroup, QStringLiteral("rmx_level_up")));
++    connect(m_pLevelUp.get(), &ControlObject::valueChanged, this, [this](double value) {
++        if (value > 0) {
++            m_pLevel->set(std::min(100.0, std::round(m_pLevel->get() + kLevelStep)));
++        }
++    });
++
++    m_pBuild = std::make_unique<ControlObject>(ConfigKey(kGroup, QStringLiteral("rmx_build")));
++    m_pBuild->connectValueChangeRequest(
++            this,
++            [this](double value) {
++                // 1 = start (or restart), 0 = stop. The engine picks the
++                // newest request up at the start of its next buffer.
++                m_buildSerial.fetch_add(1);
++                m_buildWanted.store(value > 0);
++                m_pBuild->setAndConfirm(value > 0 ? 1.0 : 0.0);
++            },
++            Qt::DirectConnection);
++
++    m_pDeck = std::make_unique<ControlObject>(ConfigKey(kGroup, QStringLiteral("rmx_deck")));
++    m_pDeck->setReadOnly();
++    m_pBpm = std::make_unique<ControlObject>(ConfigKey(kGroup, QStringLiteral("rmx_bpm")));
++    m_pBpm->setReadOnly();
++    m_pBeat = std::make_unique<ControlObject>(ConfigKey(kGroup, QStringLiteral("rmx_beat")));
++    m_pBeat->setReadOnly();
++}
++
++EngineRmx::~EngineRmx() = default;
++
++void EngineRmx::setRate(int rate) {
++    rate = std::clamp(rate, 0, kNumRates - 1);
++    m_pRate->setAndConfirm(rate);
++    for (int i = 0; i < kNumRates; ++i) {
++        m_rateButtons[i]->setAndConfirm(i == rate ? 1.0 : 0.0);
++    }
++}
++
++void EngineRmx::setMode(bool on) {
++    if (on) {
++        ensureDeckProxies();
++    } else {
++        // Closing the panel lets go of everything: a pad held on the
++        // hardware would otherwise keep rolling with nothing on screen.
++        for (auto& pad : m_pads) {
++            pad.pControl->setAndConfirm(0.0);
++        }
++        m_buildSerial.fetch_add(1);
++        m_buildWanted.store(false);
++        m_pBuild->setAndConfirm(0.0);
++    }
++    m_pMode->setAndConfirm(on ? 1.0 : 0.0);
++}
++
++void EngineRmx::ensureDeckProxies() {
++    if (m_decksReady.load(std::memory_order_acquire)) {
++        return;
++    }
++    for (int i = 0; i < 2; ++i) {
++        const QString group = QStringLiteral("[Channel%1]").arg(i + 1);
++        m_decks[i] = std::make_unique<DeckProxies>(DeckProxies{
++                PollingControlProxy(group,
++                        QStringLiteral("play"),
++                        ControlFlag::AllowMissingOrInvalid),
++                PollingControlProxy(group,
++                        QStringLiteral("bpm"),
++                        ControlFlag::AllowMissingOrInvalid),
++                PollingControlProxy(group,
++                        QStringLiteral("beat_distance"),
++                        ControlFlag::AllowMissingOrInvalid),
++        });
++    }
++    m_decksReady.store(true, std::memory_order_release);
++}
++
++CSAMPLE EngineRmx::noise() {
++    // xorshift32, white, -1..1
++    m_noiseState ^= m_noiseState << 13;
++    m_noiseState ^= m_noiseState >> 17;
++    m_noiseState ^= m_noiseState << 5;
++    return static_cast<CSAMPLE>(m_noiseState) * (2.0f / 4294967296.0f) - 1.0f;
++}
++
++void EngineRmx::trigger(int padIndex, CSAMPLE_GAIN gain) {
++    Pad& pad = m_pads[padIndex];
++    const double sampleRate = m_sampleRate;
++    Voice* pFree = nullptr;
++    for (auto& voice : pad.voices) {
++        if (voice.active) {
++            // The previous hit gets out of the way quickly but not
++            // instantly, so a fast roll does not click.
++            if (voice.fadeStep == 0.0f) {
++                voice.fadeStep = static_cast<CSAMPLE_GAIN>(
++                        1.0 / (kRetriggerFadeSeconds * sampleRate));
++            }
++        } else if (!pFree) {
++            pFree = &voice;
++        }
++    }
++    if (!pFree) {
++        // All busy (only at the fastest rolls): take the quietest one, which
++        // is the one furthest into its fade.
++        pFree = &*std::min_element(pad.voices.begin(),
++                pad.voices.end(),
++                [](const Voice& a, const Voice& b) {
++                    return a.fade < b.fade;
++                });
++    }
++
++    Voice voice;
++    voice.active = true;
++    voice.sound = static_cast<Sound>(padIndex);
++    voice.gain = gain;
++    double seconds = 0.5;
++    switch (voice.sound) {
++    case Sound::Kick:
++        seconds = 0.7;
++        break;
++    case Sound::Snare:
++        seconds = 0.45;
++        break;
++    case Sound::Clap:
++        seconds = 0.55;
++        break;
++    case Sound::Hat:
++        seconds = 0.22;
++        break;
++    }
++    voice.length = static_cast<SINT>(seconds * sampleRate);
++    *pFree = voice;
++
++    pad.framesSinceHit = 0;
++    pad.hitLightFrames = static_cast<SINT>(kHitLightSeconds * sampleRate);
++}
++
++CSAMPLE EngineRmx::renderVoice(Voice* pVoice, double sampleRate) {
++    Voice& v = *pVoice;
++    const double t = v.frame / sampleRate;
++    const double dt = 1.0 / sampleRate;
++    CSAMPLE out = 0.0f;
++
++    // One-pole high-pass: y[n] = a * (y[n-1] + x[n] - x[n-1])
++    const auto highPass = [dt](CSAMPLE x, CSAMPLE* pIn, CSAMPLE* pOut, double cutoff) {
++        const double rc = 1.0 / (kTwoPi * cutoff);
++        const auto a = static_cast<CSAMPLE>(rc / (rc + dt));
++        const CSAMPLE y = a * (*pOut + x - *pIn);
++        *pIn = x;
++        *pOut = y;
++        return y;
++    };
++
++    switch (v.sound) {
++    case Sound::Kick: {
++        // A sine that drops from ~170 Hz to 48 Hz in the first few tens of
++        // milliseconds, with a short click on top for the beater.
++        const double freq = 48.0 + 120.0 * std::exp(-t / 0.035);
++        v.phase += freq * dt;
++        v.phase -= std::floor(v.phase);
++        const double body = std::sin(kTwoPi * v.phase) * std::exp(-t / 0.3);
++        const double click = noise() * std::exp(-t / 0.0015) * 0.35;
++        out = static_cast<CSAMPLE>(body + click);
++        break;
++    }
++    case Sound::Snare: {
++        // Drum head (190 Hz) plus the wires (high-passed noise).
++        v.phase += 190.0 * dt;
++        v.phase -= std::floor(v.phase);
++        const double head = std::sin(kTwoPi * v.phase) * std::exp(-t / 0.05) * 0.55;
++        const CSAMPLE wires = highPass(noise(), &v.hpIn1, &v.hpOut1, 1200.0);
++        out = static_cast<CSAMPLE>(head + wires * std::exp(-t / 0.12) * 0.75);
++        break;
++    }
++    case Sound::Clap: {
++        // Three quick bursts of band-passed noise, then the room.
++        const double f = 2.0 * std::sin(kPi * 1100.0 * dt);
++        constexpr double kDamping = 0.9;
++        const CSAMPLE x = noise();
++        v.svfLow += static_cast<CSAMPLE>(f) * v.svfBand;
++        const CSAMPLE high = x - v.svfLow - static_cast<CSAMPLE>(kDamping) * v.svfBand;
++        v.svfBand += static_cast<CSAMPLE>(f) * high;
++        double env;
++        if (t < 0.03) {
++            env = std::exp(-std::fmod(t, 0.01) / 0.003);
++        } else {
++            env = std::exp(-(t - 0.03) / 0.12);
++        }
++        out = static_cast<CSAMPLE>(v.svfBand * env * 1.6);
++        break;
++    }
++    case Sound::Hat: {
++        // Noise through two high-passes, short.
++        CSAMPLE x = highPass(noise(), &v.hpIn1, &v.hpOut1, 7000.0);
++        x = highPass(x, &v.hpIn2, &v.hpOut2, 7000.0);
++        out = static_cast<CSAMPLE>(x * std::exp(-t / 0.04) * 0.9);
++        break;
++    }
++    }
++
++    // Last 5 ms fade to silence so the tail never ends on a step.
++    const SINT tailFrames = static_cast<SINT>(0.005 * sampleRate);
++    const SINT left = v.length - v.frame;
++    if (left < tailFrames) {
++        out *= static_cast<CSAMPLE>(left) / tailFrames;
++    }
++
++    out *= v.gain * v.fade;
++    if (v.fadeStep > 0.0f) {
++        v.fade -= v.fadeStep;
++        if (v.fade <= 0.0f) {
++            v.active = false;
++        }
++    }
++    if (++v.frame >= v.length) {
++        v.active = false;
++    }
++    return out;
++}
++
++void EngineRmx::updateClock(SINT frames, double sampleRate, double* pPh0, double* pPh1) {
++    double bpm = 0.0;
++    double beatDistance = 0.0;
++    bool following = false;
++
++    if (m_decksReady.load(std::memory_order_acquire)) {
++        std::array<bool, 2> playing{};
++        for (int i = 0; i < 2; ++i) {
++            playing[i] = m_decks[i]->play.toBool() && m_decks[i]->bpm.get() > 0.0;
++            // The deck that started most recently leads, as for the key
++            // traffic light in the library.
++            if (playing[i] && !m_wasPlaying[i]) {
++                m_masterDeck = i + 1;
++            }
++            m_wasPlaying[i] = playing[i];
++        }
++        if (m_masterDeck == 0 || !playing[m_masterDeck - 1]) {
++            if (playing[0] != playing[1]) {
++                m_masterDeck = playing[0] ? 1 : 2;
++            }
++        }
++        if (m_masterDeck > 0 && playing[m_masterDeck - 1]) {
++            const auto& deck = *m_decks[m_masterDeck - 1];
++            bpm = deck.bpm.get();
++            beatDistance = deck.beatDistance.get();
++            following = true;
++        }
++    }
++
++    if (following) {
++        m_lastBpm = bpm;
++        const double span = frames * bpm / (60.0 * sampleRate);
++        // beat_distance is where the deck is after this buffer, since the
++        // decks have already been processed for it.
++        double ph1 = beatDistance;
++        double ph0 = ph1 - span;
++        if (m_lastPhaseValid) {
++            // Carry on exactly from where the last buffer ended when the deck
++            // has only drifted a little (tempo changes, sync), so a grid line
++            // on the boundary between two buffers is neither missed nor
++            // played twice. A jump (a hot cue, a beat jump) starts afresh.
++            double drift = ph0 - m_lastPhase;
++            drift -= std::round(drift);
++            if (std::fabs(drift) < 0.05) {
++                ph0 -= drift;
++            }
++        }
++        m_lastPhase = ph1;
++        m_lastPhaseValid = true;
++        *pPh0 = ph0;
++        *pPh1 = std::max(ph0, ph1);
++    } else {
++        // Nothing playing: keep the last tempo (120 until a deck has
++        // played) and run on from the last phase.
++        const double span = frames * m_lastBpm / (60.0 * sampleRate);
++        const double ph0 = m_lastPhase;
++        const double ph1 = ph0 + span;
++        m_lastPhase = ph1 - std::floor(ph1);
++        m_lastPhaseValid = true;
++        *pPh0 = ph0;
++        *pPh1 = ph1;
++    }
++
++    const double deck = following ? m_masterDeck : 0.0;
++    if (m_pDeck->get() != deck) {
++        m_pDeck->setAndConfirm(deck);
++    }
++    const double shownBpm = std::round(m_lastBpm * 10.0) / 10.0;
++    if (m_pBpm->get() != shownBpm) {
++        m_pBpm->setAndConfirm(shownBpm);
++    }
++    const double beat = (m_lastPhase < 0.2) ? 1.0 : 0.0;
++    if (m_pBeat->get() != beat) {
++        m_pBeat->setAndConfirm(beat);
++    }
++}
++
++const CSAMPLE* EngineRmx::process(int iBufferSize, mixxx::audio::SampleRate sampleRate) {
++    // TODO: remove assumption of stereo buffer (as EngineMixer does)
++    const SINT frames = iBufferSize / 2;
++    const double rate = sampleRate.toDouble();
++    if (rate <= 0.0 || frames <= 0) {
++        return nullptr;
++    }
++    m_sampleRate = rate;
++
++    double ph0 = 0.0;
++    double ph1 = 0.0;
++    updateClock(frames, rate, &ph0, &ph1);
++    const double span = ph1 - ph0;
++    const auto frameAt = [&](double phase) {
++        if (span <= 0.0) {
++            return SINT{0};
++        }
++        return std::clamp(static_cast<SINT>((phase - ph0) / span * frames),
++                SINT{0},
++                frames - 1);
++    };
++
++    // Collect this buffer's hits: {frame, pad, gain}. At most a handful.
++    struct Hit {
++        SINT frame;
++        int pad;
++        CSAMPLE_GAIN gain;
++    };
++    std::array<Hit, 64> hits;
++    int numHits = 0;
++    const auto addHit = [&](SINT frame, int pad, CSAMPLE_GAIN gain) {
++        if (numHits < static_cast<int>(hits.size())) {
++            hits[numHits++] = Hit{frame, pad, gain};
++        }
++    };
++
++    const double stepBeats = kRateBeats[std::clamp(
++            static_cast<int>(m_pRate->get()), 0, kNumRates - 1)];
++    const double beatFrames = span > 0.0 ? frames / span : 0.0;
++    for (int i = 0; i < kNumPads; ++i) {
++        Pad& pad = m_pads[i];
++        const int serial = pad.pressSerial.load();
++        const bool pressed = serial != pad.lastSerial;
++        pad.lastSerial = serial;
++        if (pressed) {
++            // The first hit is immediate: waiting for the grid would feel
++            // like lag under the finger.
++            addHit(0, i, 1.0f);
++        }
++        if (pad.pControl->toBool() && stepBeats > 0.0 && span > 0.0) {
++            // Rolls follow the grid. A grid line that comes less than half a
++            // step after the last hit is skipped, so a press just before a
++            // line does not double up.
++            SINT sinceHit = pressed ? 0 : pad.framesSinceHit;
++            const SINT minGap = static_cast<SINT>(stepBeats * beatFrames * 0.5);
++            SINT lastFrame = 0;
++            for (double line = std::ceil(ph0 / stepBeats) * stepBeats; line < ph1;
++                    line += stepBeats) {
++                const SINT frame = frameAt(line);
++                sinceHit += frame - lastFrame;
++                lastFrame = frame;
++                if (sinceHit >= minGap) {
++                    addHit(frame, i, 1.0f);
++                    sinceHit = 0;
++                }
++            }
++        }
++    }
++
++    // BUILD
++    const int buildSerial = m_buildSerial.load();
++    if (buildSerial != m_lastBuildSerial) {
++        m_lastBuildSerial = buildSerial;
++        m_buildState = m_buildWanted.load() ? BuildState::Waiting : BuildState::Off;
++    }
++    if (m_buildState == BuildState::Waiting && span > 0.0) {
++        // Start on the next beat.
++        const double beat = std::ceil(ph0);
++        if (beat < ph1) {
++            m_buildState = BuildState::Running;
++            m_buildPos = ph0 - beat; // negative: the start is inside this buffer
++        }
++    }
++    if (m_buildState == BuildState::Running && span > 0.0) {
++        const double b0 = m_buildPos;
++        const double b1 = b0 + span;
++        // The steps all divide a beat and change on whole beats, so the
++        // next line is the next multiple of the step we are in.
++        double line = 0.0;
++        if (b0 > 0.0) {
++            const double step = buildStepAt(b0);
++            line = std::ceil(b0 / step) * step;
++        }
++        while (line < b1 && line < kBuildBeats) {
++            const auto gain = static_cast<CSAMPLE_GAIN>(kBuildStartGain +
++                    (1.0 - kBuildStartGain) * line / kBuildBeats);
++            addHit(frameAt(ph0 + (line - b0)), kBuildPad, gain);
++            line += buildStepAt(line);
++        }
++        m_buildPos = b1;
++        if (m_buildPos >= kBuildBeats) {
++            m_buildState = BuildState::Off;
++            m_pBuild->setAndConfirm(0.0);
++        }
++    }
++
++    std::sort(hits.begin(), hits.begin() + numHits, [](const Hit& a, const Hit& b) {
++        return a.frame < b.frame;
++    });
++
++    bool anyVoice = numHits > 0;
++    for (const auto& pad : m_pads) {
++        for (const auto& voice : pad.voices) {
++            anyVoice = anyVoice || voice.active;
++        }
++    }
++
++    // Hit lights and the time since each pad's last hit.
++    for (int i = 0; i < kNumPads; ++i) {
++        Pad& pad = m_pads[i];
++        SINT lastHitFrame = -1;
++        for (int h = 0; h < numHits; ++h) {
++            if (hits[h].pad == i) {
++                lastHitFrame = hits[h].frame;
++            }
++        }
++        if (lastHitFrame >= 0) {
++            pad.framesSinceHit = frames - lastHitFrame;
++            pad.hitLightFrames = static_cast<SINT>(kHitLightSeconds * rate);
++        } else {
++            pad.framesSinceHit += frames;
++            pad.hitLightFrames = std::max(SINT{0}, pad.hitLightFrames - frames);
++        }
++        const double lit = pad.hitLightFrames > 0 ? 1.0 : 0.0;
++        if (pad.pHit->get() != lit) {
++            pad.pHit->setAndConfirm(lit);
++        }
++    }
++
++    const double level = m_pLevel->get() / 100.0;
++    const auto levelGain = static_cast<CSAMPLE_GAIN>(level * level * 0.9);
++    if (!anyVoice) {
++        m_levelGainOld = levelGain;
++        return nullptr;
++    }
++
++    CSAMPLE* pOut = m_buffer.data();
++    int nextHit = 0;
++    for (SINT frame = 0; frame < frames; ++frame) {
++        while (nextHit < numHits && hits[nextHit].frame <= frame) {
++            trigger(hits[nextHit].pad, hits[nextHit].gain);
++            ++nextHit;
++        }
++        CSAMPLE sum = 0.0f;
++        for (auto& pad : m_pads) {
++            for (auto& voice : pad.voices) {
++                if (voice.active) {
++                    sum += renderVoice(&voice, rate);
++                }
++            }
++        }
++        pOut[frame * 2] = sum;
++        pOut[frame * 2 + 1] = sum;
++    }
++    SampleUtil::applyRampingGain(pOut, m_levelGainOld, levelGain, iBufferSize);
++    m_levelGainOld = levelGain;
++    return pOut;
++}
++
++bool EngineRmx::handleMidi(const QString& deviceName,
++        unsigned char status,
++        unsigned char control,
++        unsigned char value) {
++    if (!deviceName.contains(QStringLiteral("DDJ-400"), Qt::CaseInsensitive)) {
++        return false;
++    }
++
++    // SHIFT is only watched, never taken: the mapping needs it too.
++    if ((status == 0x90 || status == 0x91 || status == 0x80 || status == 0x81) &&
++            control == kShift) {
++        s_shiftDown[status & 0x01] = (status & 0xF0) == 0x90 && value > 0;
++        return false;
++    }
++
++    const bool noteOn = status == kBeatFxNoteStatus;
++    const bool noteOff = status == kBeatFxNoteOffStatus;
++    const bool isNote = noteOn || noteOff;
++    const bool pressed = noteOn && value > 0;
++
++    int pad = -1;
++    if (isNote) {
++        switch (control) {
++        case kBeatLeft:
++            pad = 0;
++            break;
++        case kBeatRight:
++            pad = 1;
++            break;
++        case kFxSelect:
++        case kFxSelectShift:
++            pad = 2;
++            break;
++        case kOnOff:
++            pad = 3;
++            break;
++        default:
++            break;
++        }
++    }
++
++    const bool isBuild = isNote && control == kOnOffShift;
++    const bool isKnob = status == kBeatFxCcStatus &&
++            (control == kLevelDepthMsb || control == kLevelDepthLsb);
++    if (pad < 0 && !isBuild && !isKnob) {
++        return false; // everything else on the unit (the jogs...) as usual
++    }
++
++    if (getControl(QStringLiteral("rmx_mode")) <= 0) {
++        // Closed. A pad that is still held from before the panel closed was
++        // already let go by setMode(); its release goes to the mapping as
++        // usual, which ignores releases on these buttons.
++        return false;
++    }
++
++    if (pad >= 0) {
++        setControl(QStringLiteral("rmx_pad%1").arg(pad + 1), pressed ? 1.0 : 0.0);
++        return true;
++    }
++    if (isBuild) {
++        if (pressed) {
++            // Start a build, or stop the one that is going.
++            setControl(QStringLiteral("rmx_build"),
++                    getControl(QStringLiteral("rmx_build")) > 0 ? 0.0 : 1.0);
++        }
++        return true;
++    }
++    if (isKnob) {
++        if (control == kLevelDepthLsb) {
++            return true; // fine position: the coarse one is plenty here
++        }
++        const double position = value / 127.0;
++        if (s_shiftDown[0] || s_shiftDown[1]) {
++            setControl(QStringLiteral("rmx_level"), std::round(position * 100.0));
++        } else {
++            // Left to right: 1/1, 1/2, 1/4, 1/8, 1/16. 1 SHOT is on the
++            // screen only - the knob is for rolls.
++            const int rate = 1 + std::min(kNumRates - 2, static_cast<int>(position * (kNumRates - 1)));
++            setControl(QStringLiteral("rmx_rate"), rate);
++        }
++        return true;
++    }
++    return false;
++}
+diff --git a/src/engine/enginermx.h b/src/engine/enginermx.h
+new file mode 100644
+index 0000000..0a13ca0
+--- /dev/null
++++ b/src/engine/enginermx.h
+@@ -0,0 +1,173 @@
++#pragma once
++
++#include <QObject>
++#include <QString>
++#include <array>
++#include <atomic>
++#include <cstdint>
++#include <memory>
++
++#include "audio/types.h"
++#include "control/pollingcontrolproxy.h"
++#include "util/samplebuffer.h"
++#include "util/types.h"
++
++class ControlObject;
++class ControlPushButton;
++class ControlPotmeter;
++
++/// Pioneered: RMX mode, a few of the RMX-1000's X-PAD tricks. Four drum pads
++/// (KICK, SNARE, CLAP, HAT) that play on the master and in the headphones,
++/// on top of whatever the decks are doing. Holding a pad rolls it at the
++/// ROLL rate, locked to the beat of the master deck (the deck that started
++/// playing most recently); BUILD plays a two-bar snare roll that speeds up
++/// into the drop.
++///
++/// The drums are synthesised here, sample by sample, so there are no sample
++/// files to ship or load and they sound the same at any engine sample rate.
++/// Everything runs in the engine thread: a hit or a roll step lands on the
++/// exact sample of the grid line, which a controller-script timer (20 ms
++/// granularity or worse) could not do.
++///
++/// Controls, all under [Pioneered]:
++///   rmx_mode        1 while the RMX panel is open (toggle)
++///   rmx_pad1..4     1 while the pad is held (push) - KICK, SNARE, CLAP, HAT
++///   rmx_pad1..4_hit flashes 1 for a moment on every hit, for the skin
++///   rmx_rate        0 = 1 SHOT, 1..5 = 1/1, 1/2, 1/4, 1/8, 1/16 beat
++///   rmx_rate_0..5   one per rate: reads 1 while selected, 1 selects it, a 0
++///                   is refused (radio buttons, like the Color FX buttons)
++///   rmx_level       drum level, 0..100
++///   rmx_level_down / rmx_level_up   10 steps down / up
++///   rmx_build       1 while a BUILD is waiting for its beat or running; 1
++///                   starts one, 0 stops it
++///   rmx_deck        the deck the drums follow (0 = none playing)
++///   rmx_bpm         the tempo the drums follow
++///   rmx_beat        1 for the first part of every beat (a beat light)
++///
++/// On the DDJ-400, while rmx_mode is 1, the BEAT FX section plays the pads
++/// instead of driving the Beat FX (see handleMidi()).
++class EngineRmx : public QObject {
++    Q_OBJECT
++  public:
++    static constexpr int kNumPads = 4;
++    static constexpr int kNumRates = 6;
++
++    EngineRmx();
++    ~EngineRmx() override;
++
++    /// Engine thread. Renders one buffer of drums (interleaved stereo,
++    /// iBufferSize samples). Returns nullptr while there is nothing to hear,
++    /// so the mixer can skip the add.
++    const CSAMPLE* process(int iBufferSize, mixxx::audio::SampleRate sampleRate);
++
++    /// Controller thread. The DDJ-400's BEAT FX section while RMX is open:
++    ///   BEAT <      KICK            BEAT >        SNARE
++    ///   FX SELECT   CLAP            ON/OFF        HAT
++    ///   SHIFT + ON/OFF   BUILD
++    ///   LEVEL/DEPTH      roll rate, 1/1 (left) to 1/16 (right)
++    ///   SHIFT + LEVEL/DEPTH   drum level
++    /// Done here rather than in Pioneer-DDJ-400-script.js because a stale
++    /// copy of the mapping in the user mapping folder shadows the shipped
++    /// script (see browse-encoder-zoom.patch). Returns true when the message
++    /// was used and must not reach the mapping.
++    static bool handleMidi(const QString& deviceName,
++            unsigned char status,
++            unsigned char control,
++            unsigned char value);
++
++  private:
++    enum class Sound {
++        Kick,
++        Snare,
++        Clap,
++        Hat,
++    };
++
++    struct Voice {
++        bool active = false;
++        Sound sound = Sound::Kick;
++        SINT frame = 0;  // frames since the hit
++        SINT length = 0; // frames until the voice ends by itself
++        CSAMPLE_GAIN gain = 1.0f;
++        CSAMPLE_GAIN fade = 1.0f;     // retrigger fade-out, 1 while not fading
++        CSAMPLE_GAIN fadeStep = 0.0f; // per frame, 0 while not fading
++        double phase = 0.0;           // oscillator phase, in cycles
++        // filter state
++        CSAMPLE hpIn1 = 0.0f;
++        CSAMPLE hpOut1 = 0.0f;
++        CSAMPLE hpIn2 = 0.0f;
++        CSAMPLE hpOut2 = 0.0f;
++        CSAMPLE svfLow = 0.0f;
++        CSAMPLE svfBand = 0.0f;
++    };
++
++    static constexpr int kVoicesPerPad = 3;
++
++    struct Pad {
++        std::unique_ptr<ControlPushButton> pControl;
++        std::unique_ptr<ControlObject> pHit;
++        std::atomic<int> pressSerial{0}; // bumped on every press, any thread
++        int lastSerial = 0;              // engine thread
++        std::array<Voice, kVoicesPerPad> voices;
++        SINT framesSinceHit = 0;
++        SINT hitLightFrames = 0; // frames left of the hit flash
++    };
++
++    void setRate(int rate);
++    void setMode(bool on);
++    void ensureDeckProxies();
++
++    void trigger(int padIndex, CSAMPLE_GAIN gain);
++    CSAMPLE renderVoice(Voice* pVoice, double sampleRate);
++    CSAMPLE noise();
++
++    /// Master-deck beat clock for this buffer: the beat phase at its first
++    /// frame and after its last one (not wrapped, ph0 <= ph1).
++    void updateClock(SINT frames, double sampleRate, double* pPh0, double* pPh1);
++
++    std::unique_ptr<ControlPushButton> m_pMode;
++    std::array<Pad, kNumPads> m_pads;
++    std::unique_ptr<ControlObject> m_pRate;
++    std::array<std::unique_ptr<ControlObject>, kNumRates> m_rateButtons;
++    std::unique_ptr<ControlPotmeter> m_pLevel;
++    std::unique_ptr<ControlPushButton> m_pLevelDown;
++    std::unique_ptr<ControlPushButton> m_pLevelUp;
++    std::unique_ptr<ControlObject> m_pBuild;
++    std::unique_ptr<ControlObject> m_pDeck;
++    std::unique_ptr<ControlObject> m_pBpm;
++    std::unique_ptr<ControlObject> m_pBeat;
++
++    // [ChannelN] play / bpm / beat_distance. The decks do not exist yet
++    // when the mixer is built, so these are made the first time RMX opens
++    // (GUI thread) and published to the engine thread through m_decksReady.
++    struct DeckProxies {
++        PollingControlProxy play;
++        PollingControlProxy bpm;
++        PollingControlProxy beatDistance;
++    };
++    std::array<std::unique_ptr<DeckProxies>, 2> m_decks;
++    std::atomic<bool> m_decksReady{false};
++
++    // engine thread state
++    mixxx::SampleBuffer m_buffer;
++    double m_sampleRate = 48000.0;
++    std::array<bool, 2> m_wasPlaying{};
++    int m_masterDeck = 0; // 1-based, 0 = none yet
++    double m_lastBpm = 120.0;
++    double m_lastPhase = 0.0; // beat phase after the last buffer, [0, 1)
++    bool m_lastPhaseValid = false;
++    CSAMPLE_GAIN m_levelGainOld = 0.0f;
++    // BUILD requests from any thread: the serial is bumped on every request,
++    // m_buildWanted says whether it was a start or a stop.
++    std::atomic<int> m_buildSerial{0};
++    std::atomic<bool> m_buildWanted{false};
++    int m_lastBuildSerial = 0;
++    enum class BuildState {
++        Off,
++        Waiting, // for the next beat
++        Running,
++    };
++    BuildState m_buildState = BuildState::Off;
++    double m_buildPos = 0.0; // beats since the build started
++    uint32_t m_noiseState = 0x12345678u;
++};

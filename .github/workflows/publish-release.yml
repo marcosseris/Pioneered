@@ -105,6 +105,7 @@ jobs:
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/beat-fx-single.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/headphone-limiter.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/search-page-only.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/rmx.patch"
           # Version the build after the release tag (v2.5.0-r20 -> +usbbrowse.r20.1)
           # so deb versions keep increasing with the release series.
           SUFFIX="${GITHUB_REF_NAME##*-}"

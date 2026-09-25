@@ -293,6 +293,197 @@ WPushButton:pressed {
 }
 
 /************************************************************************/
+/*     RMX mode                                                         */
+/************************************************************************/
+
+/* The RMX button: a mode, not an option, so it wears the accent when lit
+   rather than the Color FX blue. */
+#RmxButton {
+  background-color: transparent;
+  border: 1px solid #3c3c46;
+  border-radius: 3px;
+  color: #8f8f99;
+  font-size: 15px;
+  font-weight: bold;
+  margin: 2px;
+}
+
+#RmxButton[value="1"] {
+  background-color: #b6294c;
+  border: 1px solid #c62d54;
+  color: white;
+}
+
+#RmxButton[value="0"]:pressed {
+  background-color: #2a2a32;
+  border: 1px solid #6a6a76;
+  color: #e5e6ea;
+}
+
+#RmxBeatFxNote {
+  color: #b6294c;
+  font-size: 10px;
+  font-weight: bold;
+  qproperty-alignment: AlignCenter;
+}
+
+#RmxPanel {
+  background-color: black;
+  border: 2px solid #32323c;
+  padding: 4px;
+}
+
+#RmxHeader {
+  background-color: #32323c;
+  border-radius: 3px;
+  padding: 0 8px;
+}
+
+#RmxTitle {
+  color: #b6294c;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+#RmxFollow,
+#RmxBpm {
+  color: #e5e6ea;
+  font-size: 14px;
+  font-weight: bold;
+  padding-left: 10px;
+}
+
+#RmxBeat {
+  color: #3c3c46;
+  font-size: 16px;
+  qproperty-alignment: AlignCenter;
+}
+
+#RmxBeat[highlight="1"] {
+  color: #b6294c;
+}
+
+#RmxPads {
+  padding-top: 4px;
+}
+
+/* Pads: resting in their colour's outline; filled with it on every hit, so
+   a roll flickers in time. Kick red, snare orange, clap green, hat blue -
+   the Pioneer button colours. */
+#RmxPadKick,
+#RmxPadSnare,
+#RmxPadClap,
+#RmxPadHat {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #16161a, stop:1 black);
+  border: 2px solid #4a4a52;
+  border-radius: 4px;
+  font-size: 20px;
+  font-weight: bold;
+  margin: 3px;
+}
+
+#RmxPadKick { border-color: #d73535; color: #d73535; }
+#RmxPadSnare { border-color: #eb870f; color: #eb870f; }
+#RmxPadClap { border-color: #6ee128; color: #6ee128; }
+#RmxPadHat { border-color: #2d85cd; color: #2d85cd; }
+
+#RmxPadKick:pressed,
+#RmxPadSnare:pressed,
+#RmxPadClap:pressed,
+#RmxPadHat:pressed {
+  background-color: #2a2a32;
+}
+
+#RmxPadKick[value="1"] { background-color: #d73535; color: black; }
+#RmxPadSnare[value="1"] { background-color: #eb870f; color: black; }
+#RmxPadClap[value="1"] { background-color: #6ee128; color: black; }
+#RmxPadHat[value="1"] { background-color: #2d85cd; color: black; }
+
+#RmxPadHint {
+  color: #8f8f99;
+  font-size: 11px;
+  font-weight: bold;
+  qproperty-alignment: AlignCenter;
+}
+
+#RmxRow {
+  padding-top: 2px;
+}
+
+#RmxRowLabel {
+  color: #8f8f99;
+  font-size: 12px;
+  font-weight: bold;
+  qproperty-alignment: 'AlignRight | AlignVCenter';
+  padding-right: 6px;
+}
+
+/* ROLL rates: radio buttons styled as the Color FX ones, lit in the BeatFX
+   blue. */
+#RmxRate {
+  background-color: transparent;
+  border: 1px solid #3c3c46;
+  border-radius: 3px;
+  color: #8f8f99;
+  font-size: 12px;
+  font-weight: bold;
+  margin: 2px;
+}
+
+#RmxRate[value="1"] {
+  border: 2px solid #2d85cd;
+  color: #2d85cd;
+  margin: 1px;
+}
+
+#RmxRate[value="0"]:pressed {
+  background-color: #2a2a32;
+  border: 1px solid #6a6a76;
+  color: #e5e6ea;
+}
+
+#RmxBuild {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #16161a, stop:1 black);
+  border: 2px solid #4a4a52;
+  border-radius: 4px;
+  color: white;
+  font-size: 14px;
+  font-weight: bold;
+  margin: 2px 8px 2px 2px;
+}
+
+#RmxBuild[value="1"] {
+  background-color: #eb870f;
+  border: 2px solid #eb870f;
+  color: black;
+}
+
+#RmxStep {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #16161a, stop:1 black);
+  border: 2px solid #4a4a52;
+  border-radius: 4px;
+  color: white;
+  font-size: 20px;
+  font-weight: bold;
+  margin: 2px;
+}
+
+#RmxStep:pressed {
+  border: 2px solid #6a6a76;
+  background-color: #2a2a32;
+}
+
+#RmxLevel {
+  color: #e5e6ea;
+  font-size: 15px;
+  font-weight: bold;
+  qproperty-alignment: AlignCenter;
+}
+
+/************************************************************************/
 /*     Effects                                                          */
 /************************************************************************/
 

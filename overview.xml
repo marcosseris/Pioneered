@@ -8,7 +8,28 @@
         <ObjectName>Waveforms_Container</ObjectName>
         <Layout>horizontal</Layout>
         <Children>
-          <Template src="skin:waveforms.xml"></Template>
+          <!-- RMX mode takes the waveforms' place while it is open; the
+               BeatFX column beside it, with the RMX button, stays. -->
+          <WidgetGroup>
+            <ObjectName>WaveformsOrRmx</ObjectName>
+            <Layout>vertical</Layout>
+            <Size>0me,0me</Size>
+            <Children>
+              <WidgetGroup>
+                <Layout>vertical</Layout>
+                <Size>0me,0me</Size>
+                <Children>
+                  <Template src="skin:waveforms.xml"></Template>
+                </Children>
+                <Connection>
+                  <ConfigKey persist="false">[Pioneered],rmx_mode</ConfigKey>
+                  <Transform><Not/></Transform>
+                  <BindProperty>visible</BindProperty>
+                </Connection>
+              </WidgetGroup>
+              <Template src="skin:rmx.xml"></Template>
+            </Children>
+          </WidgetGroup>
           <Template src="skin:effects.xml"></Template>
         </Children>
       </WidgetGroup>

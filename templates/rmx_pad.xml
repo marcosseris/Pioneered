@@ -1,0 +1,48 @@
+<!DOCTYPE template>
+<!--
+  One RMX drum pad and, under it, the DDJ-400 button that plays it.
+  Variables:
+    pad:      1..4
+    name:     Kick, Snare, Clap, Hat (the pad's ObjectName, for its colour)
+    label:    the pad text
+    hardware: the hardware button's name
+  [Pioneered],rmx_padN is 1 while the pad is held (a push control, so the
+  button sends 1 on press and 0 on release). The pad shows
+  [Pioneered],rmx_padN_hit instead, which flashes on every hit, so a roll is
+  seen as well as heard.
+-->
+<Template>
+  <WidgetGroup>
+    <ObjectName>RmxPadColumn</ObjectName>
+    <Layout>vertical</Layout>
+    <SizePolicy>me,me</SizePolicy>
+    <Children>
+      <PushButton>
+        <ObjectName>RmxPad<Variable name="name"/></ObjectName>
+        <SizePolicy>me,me</SizePolicy>
+        <NumberStates>2</NumberStates>
+        <State>
+          <Number>0</Number>
+          <Text><Variable name="label"/></Text>
+        </State>
+        <State>
+          <Number>1</Number>
+          <Text><Variable name="label"/></Text>
+        </State>
+        <Connection>
+          <ConfigKey persist="false">[Pioneered],rmx_pad<Variable name="pad"/></ConfigKey>
+          <ConnectValueToWidget>false</ConnectValueToWidget>
+        </Connection>
+        <Connection>
+          <ConfigKey persist="false">[Pioneered],rmx_pad<Variable name="pad"/>_hit</ConfigKey>
+          <ConnectValueFromWidget>false</ConnectValueFromWidget>
+        </Connection>
+      </PushButton>
+      <Label>
+        <ObjectName>RmxPadHint</ObjectName>
+        <Size>0me,18f</Size>
+        <Text><Variable name="hardware"/></Text>
+      </Label>
+    </Children>
+  </WidgetGroup>
+</Template>
