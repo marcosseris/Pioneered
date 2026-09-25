@@ -1,0 +1,75 @@
+Description: A search only filters the Search page, not Browse
+ The Search and Browse tabs share one track table (LibraryTable_Singleton),
+ so a query typed on the Search page kept filtering the list in Browse and
+ the other tracks in the folder could not be seen. WSearchLineEdit now
+ parks its query when the Search page is hidden (a hide while the window
+ stays up; closing or minimising the window is ignored), re-runs the search
+ with an empty query so Browse shows the whole folder, and puts the query
+ back when the Search page is shown again, run over whatever is selected
+ then. If that view has no search (box disabled) the query stays parked.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+---
+--- a/src/widget/wsearchlineedit.h
++++ b/src/widget/wsearchlineedit.h
+@@ -41,6 +41,8 @@
+     void resizeEvent(QResizeEvent*) override;
+     void focusInEvent(QFocusEvent*) override;
+     void focusOutEvent(QFocusEvent*) override;
++    void hideEvent(QHideEvent*) override;
++    void showEvent(QShowEvent*) override;
+     bool event(QEvent*) override;
+     bool eventFilter(QObject* obj, QEvent* event) override;
+     void keyPressEvent(QKeyEvent* event) override;
+@@ -119,4 +121,7 @@
+     QTimer m_debouncingTimer;
+     QTimer m_saveTimer;
+     bool m_queryEmitted;
++    // Pioneered: query parked while the Search page is hidden, so the
++    // shared track table is unfiltered in Browse. Re-run on show.
++    QString m_hiddenSearchText;
+ };
+--- a/src/widget/wsearchlineedit.cpp
++++ b/src/widget/wsearchlineedit.cpp
+@@ -10,6 +10,7 @@
+ #include <QSizePolicy>
+ #include <QStringLiteral>
+ #include <QToolButton>
++#include <utility>
+ 
+ #include "moc_wsearchlineedit.cpp"
+ #include "preferences/configobject.h"
+@@ -476,6 +477,33 @@
+     }
+ }
+ 
++void WSearchLineEdit::hideEvent(QHideEvent* event) {
++    // Pioneered: the Search and Browse pages share one track table, so a
++    // query typed on the Search page used to keep filtering Browse too. When
++    // the Search page is swapped out (the window itself stays up), park the
++    // query and show the unfiltered list; showEvent() re-runs it.
++    // Skip when the whole window is closing/minimised.
++    if (!event->spontaneous() && window()->isVisible() && isEnabled()) {
++        m_debouncingTimer.stop();
++        const QString text = getSearchText();
++        if (!text.isEmpty()) {
++            slotSaveSearch();
++            m_hiddenSearchText = text;
++            emit search(QString());
++        }
++    }
++    QComboBox::hideEvent(event);
++}
++
++void WSearchLineEdit::showEvent(QShowEvent* event) {
++    QComboBox::showEvent(event);
++    // Re-run the parked query over whatever is selected now. If the current
++    // view has no search (box disabled), keep it parked for next time.
++    if (!m_hiddenSearchText.isEmpty() && isEnabled()) {
++        slotSetSearchText(std::exchange(m_hiddenSearchText, QString()));
++    }
++}
++
+ void WSearchLineEdit::setTextBlockSignals(const QString& text) {
+ #if ENABLE_TRACE_LOG
+     kLogger.trace()

@@ -767,27 +767,34 @@
     nudge after the spin still bends. Touches
     `res/controllers/Pioneer-DDJ-400-script.js` only, so it has the same
     stale-user-mapping caveat as the rest of `jog-nudge.patch`.
-31. `load-first-cue.patch` (added 2026-09-24, r38) — a track with cues loads
-    at the first of them, like a CDJ. Mixxx's default `[Controls] CueRecall`
-    is `SeekOnLoadMode::IntroStart`, and a rekordbox track has no intro cue
-    until Mixxx has analysed it, so every track loaded at 0:00 even though
-    `rekordboxfeature.cpp` already makes the first memory cue the main cue.
-    `CueControl::firstCuePosition()` returns the earliest of the main cue
-    (read from the `cue_point` CO, so it is quantized like the MainCue mode,
-    and only when the track really has a MainCue — a track without one still
-    shows `cue_point` 0) and the hot cues of type HotCue; saved loops do not
-    count. `trackLoaded()` seeks there in every mode except `Beginning`
-    (which still means 0:00, for the vinyl-control needle drop), and falls
-    back to the configured mode when there is no cue. `trackAnalyzed()`
-    applies the same rule to a deck that has not moved since the load: the
-    silence analyser gives a cueless track a main cue at its first sound, so
-    it moves there, and a track that loaded at its first cue stays on it
-    rather than following the intro start the analyser adds. No existing
-    test moves: the tests that load a track carrying cues use the MainCue
-    mode with only a main cue, where the rule picks the same position. New
-    tests: `CueControlTest.SeekOnLoadFirstCue` (a hot cue ahead of the main
-    cue wins, an earlier saved loop is ignored, analysis does not pull the
-    deck to the intro start) and `SeekOnLoadMainCueWithoutHotcues`. Touches
+31. `load-first-cue.patch` (added 2026-09-24, r38; reworked 2026-09-25) — a
+    track with hot cues loads at its first hot cue, like a CDJ. Mixxx's
+    default `[Controls] CueRecall` is `SeekOnLoadMode::IntroStart`, and a
+    rekordbox track has no intro cue until Mixxx has analysed it, so every
+    track loaded at 0:00. `CueControl::firstCuePosition()` returns the hot
+    cue on the lowest-numbered pad holding one (type HotCue; saved loops do
+    not count), as in Mixxx's own FirstHotcue mode. With no hot cue it
+    returns the main cue, which `rekordboxfeature.cpp` makes the first memory
+    cue. The main cue is read from the `cue_point` CO, so it is quantized like
+    the MainCue mode, and it counts only when the track really has a MainCue
+    (a track without one still shows `cue_point` 0). `trackLoaded()` seeks
+    there in every mode except `Beginning` (which still means 0:00, for the
+    vinyl-control needle drop), and falls back to the configured mode when
+    there is no cue. `trackAnalyzed()` applies the same rule to a deck that
+    has not moved since the load: the silence analyser gives a cueless track
+    a main cue at its first sound, so it moves there, and a track that loaded
+    at a cue stays on it rather than following the intro start the analyser
+    adds. **Why the rework:** r38 took the earliest of the main cue and the
+    hot cues. The first memory cue usually sits on the first beat, at about
+    0:00, so it almost always won and tracks still started at the beginning.
+    Pad order is safe to use because the import puts the remaining memory
+    cues on pads after all the rekordbox hot cues. No existing test moves:
+    the tests that load a track carrying cues use the MainCue mode with only
+    a main cue, where the rule picks the main cue. New tests:
+    `CueControlTest.SeekOnLoadFirstHotcue` (pad 2's hot cue wins over an
+    earlier main cue, an earlier hot cue on pad 3 and a saved loop on pad 1;
+    analysis does not pull the deck to the intro start) and
+    `SeekOnLoadMainCueWithoutHotcues`. Touches
     `src/engine/controls/cuecontrol.{h,cpp}`, `src/test/cuecontrol_test.cpp`.
 32. `played-tracks-greyed.patch` (added 2026-09-24, r38) — tracks played for
     30 s are drawn in the played-track colour in every list until their
@@ -871,3 +878,27 @@
     `res/controllers/Pioneer-DDJ-400-script.js`,
     `src/effects/chains/standardeffectchain.cpp`. Skin side: `effects.xml`
     shows only Effect 1.
+35. `headphone-limiter.patch` (added 2026-09-25, r40) — pressing CUE was
+    sometimes painfully loud. `headphone-gain-ceiling.patch` lets
+    `[Master],headGain` reach +30 dB, and that gain is applied to the whole
+    headphone bus, so a hot track, both decks cued at once, or master bleed
+    from the HEADPHONES MIX knob was pushed up to +30 dB and hard-clipped.
+    The audio-taper pot is dB-linear above centre, so the knob at 3/4 was
+    already +15 dB where it used to be +7 dB. `EngineMixer::processHeadphones()`
+    now (a) holds the main mix's share of the headphones to the stock +14 dB
+    ceiling, so only the PFL signal gets the extra boost, and (b) runs a peak
+    limiter on the headphone bus after the gain stage: -1 dBFS ceiling,
+    instant attack, 150 ms release (new member `m_headphoneLimiterGain`).
+    Quiet cue material keeps the full boost. Touches
+    `src/engine/enginemixer.{h,cpp}`.
+36. `search-page-only.patch` (added 2026-09-25, r40) — a search only filters
+    the Search page. Search and Browse share one track table
+    (`LibraryTable_Singleton`), so a query typed on Search kept filtering
+    Browse and the rest of the folder could not be seen. `WSearchLineEdit`
+    overrides `hideEvent()`/`showEvent()`: when the Search page is swapped
+    out (non-spontaneous hide with the window still visible, so closing or
+    minimising is ignored) it parks the query in `m_hiddenSearchText` and
+    emits an empty search so Browse shows the whole folder; on show it re-runs
+    the query through `slotSetSearchText()` over whatever is selected then. If
+    that view has no search (box disabled) the query stays parked. Touches
+    `src/widget/wsearchlineedit.{h,cpp}`.

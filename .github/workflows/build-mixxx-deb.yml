@@ -58,6 +58,8 @@ jobs:
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/played-tracks-greyed.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/color-fx.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/beat-fx-single.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/headphone-limiter.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/search-page-only.patch"
           DEBEMAIL=pioneered-build@localhost DEBFULLNAME="Pioneered CI" \
             dch --local "+usbbrowse.r${GITHUB_RUN_NUMBER}." "Pioneered USB browse/eject patch build ${GITHUB_RUN_NUMBER}"
 

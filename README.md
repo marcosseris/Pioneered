@@ -62,6 +62,8 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
     most recently); keys are always shown as note names (Am, F♯m, …)
   * **Played tracks are greyed out**: a track that has played on a deck for
     30 s shows dimmed in every list until its stick is ejected or pulled
+  * **A search only filters the Search page**: Browse always shows the whole
+    folder, and your query is still there when you go back to Search
 * **Waveforms & playback like Pioneer gear**
   * Rekordbox-style **red bar markers** on the beatgrid (first beat of every
     bar), with the grid correctly anchored on rekordbox's "1"
@@ -99,8 +101,13 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   * **Hot cue pads play like a CDJ**: a pad pressed on a paused deck starts
     playing from the cue and keeps playing after you let go (a saved loop pad
     starts its loop)
-  * **Tracks load at their first cue**: a track with rekordbox memory cues or
-    hot cues loads at the earliest of them instead of at 0:00
+  * **Tracks load at their first hot cue**: a track with hot cues loads at
+    the first of them (pad A), and a track without any at its first rekordbox
+    memory cue, instead of at 0:00
+  * **Headphone cue that can't blast you**: the headphone level still goes
+    loud enough for a quiet cue, but a limiter stops hot tracks, both decks
+    cued at once, or master bleed from HEADPHONES MIX from going past full
+    scale
 * **Reliability**
   * Hardened rekordbox database parser: corrupt/truncated `EXPORT.PDB` files
     (e.g. from pulling a stick mid-write) can no longer crash Mixxx

@@ -1,27 +1,33 @@
-Description: A track with cues loads at the first of them, like a CDJ
+Description: A track with hot cues loads at its first hot cue
  Mixxx's default "load at" mode is the intro start, which a rekordbox track
  does not have until Mixxx has analysed it, so every track loaded at 0:00,
- memory cues or not. The import already makes the first memory cue the main
- cue; CueControl now seeks a loaded track to the earliest of the main cue and
- its hot cues (saved loops do not count). A track with neither loads by the
- configured mode as before. Only the "Beginning" mode still means 0:00, which
- keeps the vinyl-control needle drop working.
+ cues or not. CueControl now seeks a loaded track to its first hot cue (the
+ lowest-numbered pad holding one; saved loops do not count), or, with no hot
+ cue, to its main cue, which the import makes the first memory cue. A track
+ with neither loads by the configured mode as before. Only the "Beginning"
+ mode still means 0:00, which keeps the vinyl-control needle drop working.
+ .
+ The first version (r38) loaded at the earliest of the main cue and the hot
+ cues. The first memory cue usually sits on the first beat, at about 0:00,
+ so nearly every track still loaded at the start. The import puts the other
+ memory cues on pads after all the rekordbox hot cues, so the lowest pad
+ holding a hot cue is always a real hot cue when the track has one.
  .
  trackAnalyzed() applies the same rule when analysis finishes on a deck that
  has not been moved since the load: a track with no cues gets a main cue at
  its first sound from the silence analyser and moves there, and a track that
- loaded at its first cue stays on it instead of following the intro start the
+ loaded at a cue stays on it instead of following the intro start the
  analyser adds.
  .
  No existing test moves: the tests that load a track with cues on it use
- SeekOnLoadMode::MainCue with only a main cue, where the first cue is the
- main cue. New tests: CueControlTest.SeekOnLoadFirstCue and
+ SeekOnLoadMode::MainCue with only a main cue, where the rule picks the main
+ cue. New tests: CueControlTest.SeekOnLoadFirstHotcue and
  SeekOnLoadMainCueWithoutHotcues.
 Author: Pioneered CI <pioneered-build@localhost>
 Forwarded: no
 ---
 diff --git a/src/engine/controls/cuecontrol.cpp b/src/engine/controls/cuecontrol.cpp
-index 44dc69d..7a54531 100644
+index 44dc69d..c2641d7 100644
 --- a/src/engine/controls/cuecontrol.cpp
 +++ b/src/engine/controls/cuecontrol.cpp
 @@ -535,6 +535,19 @@ void CueControl::trackLoaded(TrackPointer pNewTrack) {
@@ -44,43 +50,50 @@ index 44dc69d..7a54531 100644
      switch (seekOnLoadMode) {
      case SeekOnLoadMode::Beginning:
          // This allows users to load tracks and have the needle-drop be maintained.
-@@ -600,6 +613,29 @@ void CueControl::trackLoaded(TrackPointer pNewTrack) {
+@@ -600,6 +613,36 @@ void CueControl::trackLoaded(TrackPointer pNewTrack) {
      seekOnLoad(mixxx::audio::kStartFramePos);
  }
  
 +mixxx::audio::FramePos CueControl::firstCuePosition(const TrackPointer& pTrack) const {
-+    mixxx::audio::FramePos first;
-+    // A track with no main cue still shows cue_point 0 (the default), so the
-+    // main cue counts only when the track really has one.
-+    if (pTrack && pTrack->findCueByType(mixxx::CueType::MainCue)) {
-+        // From the CO rather than the cue, like SeekOnLoadMode::MainCue:
-+        // the CO is quantized when quantize is on.
-+        first = mixxx::audio::FramePos::fromEngineSamplePosMaybeInvalid(
-+                m_pCuePoint->get());
-+    }
++    // The first hot cue is the lowest-numbered pad holding one, as in Mixxx's
++    // "First hotcue" mode, not the earliest cue in the track: the first
++    // rekordbox memory cue (the main cue) usually sits on the first beat, at
++    // about 0:00, and picking the earliest cue loaded nearly every track
++    // there. The import puts the other memory cues on pads after all the
++    // rekordbox hot cues, so a real hot cue always comes first. Saved loops
++    // are skipped.
 +    for (const auto* pControl : std::as_const(m_hotcueControls)) {
 +        const CuePointer pCue = pControl->getCue();
 +        if (!pCue || pCue->getType() != mixxx::CueType::HotCue) {
 +            continue;
 +        }
 +        const auto position = pControl->getPosition();
-+        if (position.isValid() && (!first.isValid() || position < first)) {
-+            first = position;
++        if (position.isValid()) {
++            return position;
 +        }
 +    }
-+    return first;
++    // No hot cue: the main cue. A track with no main cue still shows
++    // cue_point 0 (the default), so it counts only when the track really has
++    // one.
++    if (pTrack && pTrack->findCueByType(mixxx::CueType::MainCue)) {
++        // From the CO rather than the cue, like SeekOnLoadMode::MainCue:
++        // the CO is quantized when quantize is on.
++        return mixxx::audio::FramePos::fromEngineSamplePosMaybeInvalid(
++                m_pCuePoint->get());
++    }
++    return {};
 +}
 +
  void CueControl::seekOnLoad(mixxx::audio::FramePos seekOnLoadPosition) {
      DEBUG_ASSERT(seekOnLoadPosition.isValid());
      seekExact(seekOnLoadPosition);
-@@ -764,6 +800,23 @@ void CueControl::trackAnalyzed() {
+@@ -764,6 +807,23 @@ void CueControl::trackAnalyzed() {
      // Make track follow the updated cues.
      SeekOnLoadMode seekOnLoadMode = getSeekOnLoadPreference();
  
 +    // Pioneered: same rule as on load. Analysis gives a track with no main
 +    // cue one at its first sound, so a track that loaded at 0:00 moves there,
-+    // and a track that loaded at its first cue stays on it instead of
++    // and a track that loaded at a cue stays on it instead of
 +    // following the intro start that analysis adds.
 +    if (seekOnLoadMode != SeekOnLoadMode::Beginning) {
 +        TrackPointer pTrack;
@@ -115,44 +128,49 @@ index 3f45de0..501f50a 100644
      int getHotcueFocusIndex() const;
      mixxx::RgbColor colorFromConfig(const ConfigKey& configKey);
 diff --git a/src/test/cuecontrol_test.cpp b/src/test/cuecontrol_test.cpp
-index 5666a9b..6d01d8e 100644
+index 5666a9b..8be060b 100644
 --- a/src/test/cuecontrol_test.cpp
 +++ b/src/test/cuecontrol_test.cpp
-@@ -300,6 +300,45 @@ TEST_F(CueControlTest, SeekOnLoadDefault) {
+@@ -300,6 +300,50 @@ TEST_F(CueControlTest, SeekOnLoadDefault) {
      EXPECT_FRAMEPOS_EQ(mixxx::audio::FramePos(250.0), getCurrentFramePos());
  }
  
-+TEST_F(CueControlTest, SeekOnLoadFirstCue) {
-+    // Pioneered: in the default mode a track with cues loads at the first of
-+    // them -- here a hot cue ahead of the main cue (the first rekordbox
-+    // memory cue) -- rather than at the intro start. A saved loop that starts
-+    // even earlier is not a cue to load at.
++TEST_F(CueControlTest, SeekOnLoadFirstHotcue) {
++    // Pioneered: in the default mode a track with hot cues loads at the
++    // first of them -- the lowest-numbered pad -- rather than at the intro
++    // start, or at the main cue (the first rekordbox memory cue), which
++    // usually sits on the first beat before any hot cue. A saved loop on an
++    // earlier pad is not a cue to load at.
 +    TrackPointer pTrack = createTestTrack();
-+    pTrack->setMainCuePosition(mixxx::audio::FramePos(300.0));
-+    pTrack->createAndAddCue(mixxx::CueType::HotCue,
-+            2,
-+            mixxx::audio::FramePos(200.0),
-+            mixxx::audio::kInvalidFramePos);
++    pTrack->setMainCuePosition(mixxx::audio::FramePos(50.0));
 +    pTrack->createAndAddCue(mixxx::CueType::Loop,
 +            0,
 +            mixxx::audio::FramePos(100.0),
 +            mixxx::audio::FramePos(150.0));
++    pTrack->createAndAddCue(mixxx::CueType::HotCue,
++            1,
++            mixxx::audio::FramePos(300.0),
++            mixxx::audio::kInvalidFramePos);
++    pTrack->createAndAddCue(mixxx::CueType::HotCue,
++            2,
++            mixxx::audio::FramePos(200.0),
++            mixxx::audio::kInvalidFramePos);
 +    pTrack->createAndAddCue(mixxx::CueType::Intro,
 +            Cue::kNoHotCue,
 +            mixxx::audio::FramePos(250.0),
 +            mixxx::audio::kInvalidFramePos);
 +
 +    loadTrack(pTrack);
-+    EXPECT_FRAMEPOS_EQ(mixxx::audio::FramePos(200.0), getCurrentFramePos());
++    EXPECT_FRAMEPOS_EQ(mixxx::audio::FramePos(300.0), getCurrentFramePos());
 +
 +    // Analysis finishing does not pull it over to the intro start.
 +    pTrack->analysisFinished();
 +    ProcessBuffer();
-+    EXPECT_FRAMEPOS_EQ(mixxx::audio::FramePos(200.0), getCurrentFramePos());
++    EXPECT_FRAMEPOS_EQ(mixxx::audio::FramePos(300.0), getCurrentFramePos());
 +}
 +
 +TEST_F(CueControlTest, SeekOnLoadMainCueWithoutHotcues) {
-+    // Pioneered: with no hot cues, the main cue is the first cue.
++    // Pioneered: with no hot cues, the track loads at the main cue.
 +    TrackPointer pTrack = createTestTrack();
 +    pTrack->setMainCuePosition(mixxx::audio::FramePos(300.0));
 +

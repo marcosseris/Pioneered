@@ -1,0 +1,114 @@
+Description: Keep the headphone cue from blasting
+ headphone-gain-ceiling.patch raised [Master],headGain to +30 dB so the
+ quiet PFL bus could get loud enough on the DDJ-400. That gain is applied
+ to the whole headphone bus, so pressing CUE was sometimes painfully loud:
+ a hot track, both decks cued at once, or any master bleed from the
+ HEADPHONES MIX knob was pushed up to +30 dB and hard-clipped.
+ .
+ Two guards in EngineMixer::processHeadphones():
+ - The main mix's share of the headphones is held to the stock +14 dB
+   ceiling; only the PFL signal gets the extra boost.
+ - A peak limiter on the headphone bus after the gain stage: -1 dBFS
+   ceiling, instant attack, 150 ms release. Quiet cue material keeps the
+   full boost; loud material can no longer go past full scale.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+---
+--- a/src/engine/enginemixer.h
++++ b/src/engine/enginemixer.h
+@@ -329,6 +329,8 @@
+     CSAMPLE_GAIN m_boothGainOld;
+     CSAMPLE_GAIN m_headphoneMainGainOld;
+     CSAMPLE_GAIN m_headphoneGainOld;
++    // Pioneered: gain of the headphone safety limiter (1.0 = not limiting).
++    CSAMPLE_GAIN m_headphoneLimiterGain;
+     CSAMPLE_GAIN m_balleftOld;
+     CSAMPLE_GAIN m_balrightOld;
+     std::atomic<unsigned int> m_numMicsConfigured;
+--- a/src/engine/enginemixer.cpp
++++ b/src/engine/enginemixer.cpp
+@@ -1,5 +1,8 @@
+ #include "engine/enginemixer.h"
+ 
++#include <algorithm>
++#include <cmath>
++
+ #include "audio/types.h"
+ #include "control/controlaudiotaperpot.h"
+ #include "control/controlpotmeter.h"
+@@ -40,6 +43,7 @@
+           m_boothGainOld(0.0),
+           m_headphoneMainGainOld(0.0),
+           m_headphoneGainOld(1.0),
++          m_headphoneLimiterGain(1.0),
+           m_balleftOld(1.0),
+           m_balrightOld(1.0),
+           m_numMicsConfigured(0),
+@@ -840,14 +844,27 @@
+ void EngineMixer::processHeadphones(
+         const CSAMPLE_GAIN mainMixGainInHeadphones,
+         int iBufferSize) {
++    CSAMPLE_GAIN headphoneGain = static_cast<CSAMPLE_GAIN>(m_pHeadGain->get());
++
++    // Pioneered: headGain reaches +30 dB so the quiet cue (PFL) bus can get
++    // loud enough on the DDJ-400. The main mix is already at full level, so
++    // its share of the headphones (HEADPHONES MIX turned towards MASTER) is
++    // held to the stock +14 dB ceiling; before, any master bleed was boosted
++    // up to +30 dB along with the cue.
++    constexpr CSAMPLE_GAIN kMainInHeadphonesMaxGain = 5.0119f; // +14 dB
++    CSAMPLE_GAIN mainGain = mainMixGainInHeadphones;
++    if (headphoneGain > kMainInHeadphonesMaxGain) {
++        mainGain *= kMainInHeadphonesMaxGain / headphoneGain;
++    }
++
+     // Add main mix to headphones
+     SampleUtil::addWithRampingGain(
+             m_head.data(),
+             m_main.data(),
+             m_headphoneMainGainOld,
+-            mainMixGainInHeadphones,
++            mainGain,
+             iBufferSize);
+-    m_headphoneMainGainOld = mainMixGainInHeadphones;
++    m_headphoneMainGainOld = mainGain;
+ 
+     // If Head Split is enabled, replace the left channel of the pfl buffer
+     // with a mono mix of the headphone buffer, and the right channel of the pfl
+@@ -864,13 +881,36 @@
+     }
+ 
+     // Apply headphone gain
+-    CSAMPLE_GAIN headphoneGain = static_cast<CSAMPLE_GAIN>(m_pHeadGain->get());
+     SampleUtil::applyRampingGain(
+             m_head.data(),
+             m_headphoneGainOld,
+             headphoneGain,
+             iBufferSize);
+     m_headphoneGainOld = headphoneGain;
++
++    // Pioneered: headphone safety limiter. With up to +30 dB of gain, a hot
++    // track (or both decks cued at once) drove the cue bus far past full
++    // scale, so pressing CUE was sometimes painfully loud and hard-clipped.
++    // Peak limiter at -1 dBFS: instant attack so nothing gets past the
++    // ceiling, smooth release so quiet material keeps the full boost.
++    constexpr CSAMPLE kCeiling = 0.8913f; // -1 dBFS
++    constexpr double kReleaseSeconds = 0.15;
++    const auto release = static_cast<CSAMPLE_GAIN>(
++            1.0 - std::exp(-1.0 / (kReleaseSeconds * m_sampleRate.toDouble())));
++    CSAMPLE_GAIN limiterGain = m_headphoneLimiterGain;
++    CSAMPLE* const pHead = m_head.data();
++    for (SINT i = 0; i + 1 < iBufferSize; i += 2) {
++        const CSAMPLE peak = std::max(std::fabs(pHead[i]), std::fabs(pHead[i + 1]));
++        const CSAMPLE_GAIN target = peak > kCeiling ? kCeiling / peak : 1.0f;
++        if (target < limiterGain) {
++            limiterGain = target;
++        } else {
++            limiterGain += (target - limiterGain) * release;
++        }
++        pHead[i] *= limiterGain;
++        pHead[i + 1] *= limiterGain;
++    }
++    m_headphoneLimiterGain = limiterGain;
+ }
+ 
+ void EngineMixer::addChannel(EngineChannel* pChannel) {
