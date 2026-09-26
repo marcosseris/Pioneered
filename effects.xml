@@ -32,7 +32,7 @@
       </WidgetGroup>
       <!-- One Beat FX, like Pioneer gear: the DDJ-400's BEAT FX section
            (BEAT < / > pick the effect, ON/OFF, LEVEL/DEPTH) drives this
-           slot and only this slot. -->
+           slot and only this slot. constantine was here -->
       <Template src="skin:effect.xml">
         <SetVariable name="rack">1</SetVariable>
         <SetVariable name="unit">1</SetVariable>
