@@ -939,3 +939,16 @@
     `overview.xml` (RMX panel in the waveforms' place), new `rmx.xml`,
     `templates/rmx_pad.xml`, `templates/rmx_rate_button.xml`, `style.qss`
     (`#Rmx*`).
+38. `ledfx-status.patch` (added 2026-10-03) — LEDS button in the settings
+    menu for the optional LedFx room lights (`pi/ledfx-install.sh`).
+    `LibraryControl` gets read-only `[Library],ledfx_status`: 1 while
+    `systemctl is-active ledfx` succeeds AND `nmcli -t networking
+    connectivity` reports full or limited (WLED only needs the LAN), 0
+    otherwise. It is checked by an async `/bin/sh` on a 3 s timer that only
+    spawns the check while `[Skin],show_settings` is 1, plus once immediately
+    when the cog presses `menu_disarm`. `[Library],ledfx_toggle` runs `sudo -n
+    systemctl stop ledfx` when the status is 1 and `start` otherwise, then
+    re-polls. Touches `src/library/librarycontrol.{h,cpp}` only; applied
+    last, after `rmx.patch`. Skin side: `settings.xml` (the WI-FI row
+    becomes horizontal, WI-FI | LEDS, so the panel keeps its 418 px height),
+    `style.qss` (`#SettingsLedFx`, red / `[value="1"]` green).

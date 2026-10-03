@@ -111,6 +111,52 @@ Compare ch1 vs ch3/ch4 within each format (full table in the script header):
 - ch3/4 distort in both formats → driver-level; capture `dmesg | grep -i snd`
   and the `aplay --dump-hw-params` output the matrix prints.
 
+## Room LEDs (LedFx)
+LedFx runs on the Pi as the `ledfx` systemd service and drives WLED strips
+over Wi-Fi (DDP/E1.31). Mixxx opens the DDJ-400 on raw `hw:`, which locks
+the card, so LedFx cannot capture from it. Instead Mixxx's Booth output
+copies the master mix into the ALSA loopback:
+
+    Mixxx Booth -> hw:Loopback,0,0 (hw:10,0) -> hw:Loopback,1,0 (hw:10,1) -> LedFx -> WLED
+
+Files in `pi/`, installed by `sudo pi/ledfx-install.sh` (safe to re-run):
+- `pi/ledfx-snd-aloop.conf` -> `/etc/modprobe.d/` (`index=10 id=Loopback`,
+  pinned so the loopback never renumbers the DDJ-400), plus
+  `/etc/modules-load.d/ledfx-snd-aloop.conf` to load it at boot.
+- LedFx goes in a venv at `/opt/ledfx`, built with uv on trixie's Python 3.13
+  (LedFx 2.2 supports 3.11-3.14).
+- `pi/ledfx.service` -> `/etc/systemd/system/ledfx.service` with `User=` set
+  to the login user. Web UI on `0.0.0.0:8888`. `Nice=15`, batch scheduling,
+  `CPUAffinity=3`, idle I/O, `MemoryMax=400M`: Mixxx always wins.
+- `/etc/sudoers.d/pioneered-ledfx`: passwordless
+  `systemctl start|stop ledfx` for the LEDS button (checked with `visudo -c`).
+
+One-time manual steps:
+1. Mixxx Preferences > Sound Hardware > Output > Booth =
+   `Loopback: PCM (hw:10,0)` ch 1-2. Keep 44100 Hz (the DDJ-400's only rate)
+   and the DDJ-400 as clock reference.
+2. From a laptop: `http://<hostname>.local:8888` > Settings > Audio Device =
+   the Loopback capture device (`hw:10,1`). Add the WLED device(s) and assign
+   effects. LedFx keeps its config in `~/.ledfx/` of the login user.
+
+LEDS button (settings menu, beside WI-FI; needs `ledfx-status.patch`):
+green = service active and the network is up (full or LAN-only), red =
+service off or no network. A tap stops it when green and starts it when red.
+It is polled only while the settings panel is open.
+
+Checks:
+- `aplay -l` shows `card 10: Loopback`, and the DDJ-400's card number has
+  not changed.
+- While a track plays: `arecord -D hw:10,1 -f S16_LE -r 44100 -c 2 -d 5 /tmp/t.wav`
+  records the master mix.
+- `systemctl status ledfx`, `journalctl -u ledfx -f`.
+
+Risk: with Booth assigned, Mixxx drives two ALSA devices. Run a 30-minute mix
+and listen for clicks on master/phones. If any appear, raise the audio buffer
+one step, or unassign Booth and use plan B instead: a USB line-in dongle
+fed from the DDJ-400's master out, picked as LedFx's audio device. Plan B
+needs no Mixxx changes at all.
+
 ## Crash diagnostics
 One-time setup:  sudo apt install -y systemd-coredump gdb
 (Debug symbols come from the mixxx-dbgsym package installed above.)

@@ -158,6 +158,10 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
     for its password on the **on-screen keyboard** (now with SHIFT and a
     ?123 punctuation layer, shared with the Search page). Tap the connected
     network twice to forget it. Driven through NetworkManager's `nmcli`
+  * **LEDS** sits beside WI-FI and shows the room lights at a glance:
+    **green** while the LedFx service is running and the Pi is on a network,
+    **red** when it is off or offline. Tap it to stop LedFx when green, or
+    start it when red (see *Room LEDs* below)
 
 ## Requirements
 
@@ -256,6 +260,31 @@ built-in **Pioneer DDJ-400** mapping (the patched `mixxx-data` package contains
 the tempo-fader-sync version). Thanks to the reconnect watchdog this is a
 one-time setup: replugging or plugging in after startup reconnects
 automatically.
+
+### 8. Room LEDs (optional, LedFx)
+
+[LedFx](https://github.com/LedFx/LedFx) can run on the Pi and drive WLED
+(ESP32/ESP8266) strips around the room from the music Mixxx is playing.
+Mixxx holds the DDJ-400 exclusively, so the audio reaches LedFx through an
+ALSA loopback fed by Mixxx's **Booth** output. You configure LedFx from any
+computer on the same network.
+
+```bash
+sudo ./pi/ledfx-install.sh     # loopback, LedFx in /opt/ledfx, service, LEDS-button rule
+```
+
+Then, once:
+1. Mixxx → *Preferences → Sound Hardware → Output*: **Booth** =
+   `Loopback: PCM (hw:10,0)`, channels 1-2. Keep the DDJ-400 as the clock
+   reference.
+2. On a laptop open `http://<pi-hostname>.local:8888`. Set *Settings → Audio
+   Device* to the Loopback capture device (`hw:10,1`), add your WLED
+   device(s) and pick an effect.
+
+LedFx runs niced on a single core so it cannot take CPU from the decks. If
+the master ever clicks after you assign Booth, unassign it. A cheap USB
+line-in fed from the DDJ-400's master out works as a capture source instead,
+with no change to Mixxx. Details are in `docs/pi-deploy.md`.
 
 ## Using the console
 

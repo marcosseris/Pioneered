@@ -897,6 +897,27 @@ WBeatSpinBox::up-button {
   color: white;
 }
 
+/* LEDS: green while the ledfx service runs and the network is up, red
+   when it is off or offline ([Library],ledfx_status). The red is the one
+   the armed POWER OFF wears; the green is a plain fill, not the skin's
+   lime accent, so it reads as "on" rather than "selected". */
+#SettingsPanel #SettingsLedFx {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #c62d54, stop:1 #a62446);
+  border: 2px solid #4a4a52;
+  color: white;
+}
+#SettingsPanel #SettingsLedFx[value="1"] {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+      stop:0 #3fa34d, stop:1 #2e7d3a);
+  border: 2px solid #4a4a52;
+  color: white;
+}
+#SettingsPanel #SettingsLedFx:pressed,
+#SettingsPanel #SettingsLedFx[value="1"]:pressed {
+  border: 2px solid white;
+}
+
 /* Two-ID selectors, mandatory here: a single "#SettingsPanel WPushButton
    :pressed" rule is one ID plus a pseudo-class and would lose to the two-ID
    per-button rules above, silently doing nothing. The armed faces get no

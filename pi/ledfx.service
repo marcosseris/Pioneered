@@ -1,0 +1,27 @@
+# LedFx: audio-reactive room LEDs (installed to /etc/systemd/system/ by
+# ledfx-install.sh, which fills in User=). Web UI on port 8888 on every
+# interface, so it is configured from a laptop on the same network:
+# http://<pi-hostname>.local:8888
+#
+# Mixxx owns the audio and the CPU: LedFx runs niced, batch-scheduled, on one
+# core, with idle I/O and a memory cap, so a busy effect can never starve the
+# decks.
+[Unit]
+Description=LedFx audio-reactive LEDs
+Wants=network-online.target
+After=network-online.target sound.target
+
+[Service]
+Type=simple
+User=@USER@
+ExecStart=/opt/ledfx/bin/ledfx --host 0.0.0.0 --port 8888 --offline --no-tray
+Restart=on-failure
+RestartSec=5
+Nice=15
+CPUSchedulingPolicy=batch
+IOSchedulingClass=idle
+CPUAffinity=3
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target

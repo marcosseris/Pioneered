@@ -1,0 +1,188 @@
+Description: LEDS button in the settings menu shows and toggles the LedFx service
+ LedFx runs on the Pi as the "ledfx" systemd service (pi/ledfx-*), driving the
+ room's WLED strips from Mixxx's Booth output via an ALSA loopback. There is
+ no keyboard or shell on the deck, so the settings menu gets a LEDS button
+ that shows whether the room lights are live and turns them on and off.
+ .
+ [Library],ledfx_status (read-only) is 1 while the service is active AND
+ NetworkManager reports full or limited connectivity (WLED only needs the
+ LAN, not the internet), 0 otherwise; the skin paints the button green or
+ red from it. The check is an async /bin/sh run of systemctl + nmcli, on a
+ 3 s timer that only spawns it while [Skin],show_settings is 1, plus once
+ straight away when the cog opens the panel (menu_disarm). A mix in progress
+ with the menu closed pays nothing.
+ .
+ [Library],ledfx_toggle stops the service when the button is green and
+ starts it otherwise, through "sudo -n systemctl start|stop ledfx" (the
+ passwordless rule pi/ledfx-install.sh installs), then re-polls.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+---
+diff --git a/src/library/librarycontrol.cpp b/src/library/librarycontrol.cpp
+index 8d2429e..195b293 100644
+--- a/src/library/librarycontrol.cpp
++++ b/src/library/librarycontrol.cpp
+@@ -375,6 +375,11 @@ LibraryControl::LibraryControl(Library* pLibrary)
+                 m_pMenuDisarm->setAndConfirm(value);
+                 if (value > 0.0) {
+                     disarmSystemMenu();
++                    // The cog presses menu_disarm as it opens the panel:
++                    // refresh the LEDS face now rather than up to 3 s late.
++                    // Deferred a turn, so the same tap's show_settings = 1
++                    // has landed whichever order the skin applied them in.
++                    QTimer::singleShot(0, this, &LibraryControl::slotPollLedFx);
+                 }
+             });
+     m_pPoweringOff = std::make_unique<ControlPushButton>(
+@@ -388,6 +393,27 @@ LibraryControl::LibraryControl(Library* pLibrary)
+             this,
+             &LibraryControl::disarmSystemMenu);
+ 
++    // LEDS button: ledfx_status drives the green/red face; ledfx_toggle
++    // starts or stops the service. The poll runs every 3 s but only spawns
++    // its check while the settings panel is open, so a set in progress never
++    // pays for it.
++    m_pLedFxStatus = std::make_unique<ControlObject>(
++            ConfigKey("[Library]", "ledfx_status"));
++    m_pLedFxStatus->setReadOnly();
++    m_pLedFxToggle = std::make_unique<ControlPushButton>(
++            ConfigKey("[Library]", "ledfx_toggle"));
++    m_pLedFxToggle->connectValueChangeRequest(this,
++            [this](double value) {
++                m_pLedFxToggle->setAndConfirm(value);
++                slotLedFxToggle(value);
++            });
++    m_ledFxPollTimer.setInterval(3000);
++    connect(&m_ledFxPollTimer,
++            &QTimer::timeout,
++            this,
++            &LibraryControl::slotPollLedFx);
++    m_ledFxPollTimer.start();
++
+     m_holdFlashTimer.setInterval(40);
+     connect(&m_holdFlashTimer,
+             &QTimer::timeout,
+@@ -2104,6 +2130,91 @@ void LibraryControl::triggerPowerOff() {
+             {QStringLiteral("-c"), script});
+ }
+ 
++void LibraryControl::slotPollLedFx() {
++    if (m_ledFxPollRunning || m_ledFxToggleRunning) {
++        return;
++    }
++    // [Skin],show_settings is created by the skin, after this object; until
++    // then (and on a skin without the panel) there is nothing to show.
++    ControlObject* pShowSettings = ControlObject::getControl(
++            ConfigKey("[Skin]", "show_settings"),
++            ControlFlag::NoWarnIfMissing);
++    if (!pShowSettings || pShowSettings->get() <= 0.0) {
++        return;
++    }
++    // Green only if the service is up AND the Pi is on a network: WLED is
++    // reached over the LAN, so "limited" (LAN without internet) still counts.
++    const QString script = QStringLiteral(
++            "systemctl is-active --quiet ledfx || exit 1; "
++            "case \"$(nmcli -t networking connectivity 2>/dev/null)\" in "
++            "full|limited) exit 0;; *) exit 1;; esac");
++    m_ledFxPollRunning = true;
++    auto* pProcess = new QProcess(this);
++    connect(pProcess,
++            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
++            this,
++            [this, pProcess](int exitCode, QProcess::ExitStatus exitStatus) {
++                pProcess->deleteLater();
++                m_ledFxPollRunning = false;
++                const bool up = exitStatus == QProcess::NormalExit &&
++                        exitCode == 0;
++                m_pLedFxStatus->forceSet(up ? 1.0 : 0.0);
++            });
++    connect(pProcess,
++            &QProcess::errorOccurred,
++            this,
++            [this, pProcess](QProcess::ProcessError error) {
++                if (error == QProcess::FailedToStart) {
++                    pProcess->deleteLater();
++                    m_ledFxPollRunning = false;
++                    m_pLedFxStatus->forceSet(0.0);
++                }
++            });
++    pProcess->start(QStringLiteral("/bin/sh"),
++            {QStringLiteral("-c"), script});
++}
++
++void LibraryControl::slotLedFxToggle(double v) {
++    if (v <= 0.0 || m_ledFxToggleRunning) {
++        return;
++    }
++    // Stop when it shows green, otherwise start: a red button means "off or
++    // no network", and starting an already-running service is harmless.
++    // Needs the passwordless sudo rule pi/ledfx-install.sh installs.
++    const bool stop = m_pLedFxStatus->get() > 0.0;
++    const QString script = stop
++            ? QStringLiteral("sudo -n systemctl stop ledfx")
++            : QStringLiteral("sudo -n systemctl start ledfx");
++    qWarning() << "Settings menu: LEDS:" << script;
++    m_ledFxToggleRunning = true;
++    auto* pProcess = new QProcess(this);
++    connect(pProcess,
++            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
++            this,
++            [this, pProcess](int exitCode, QProcess::ExitStatus exitStatus) {
++                pProcess->deleteLater();
++                m_ledFxToggleRunning = false;
++                if (exitStatus != QProcess::NormalExit || exitCode != 0) {
++                    qWarning() << "LEDS toggle failed:"
++                               << QString::fromUtf8(
++                                          pProcess->readAllStandardError())
++                                          .trimmed();
++                }
++                slotPollLedFx();
++            });
++    connect(pProcess,
++            &QProcess::errorOccurred,
++            this,
++            [this, pProcess](QProcess::ProcessError error) {
++                if (error == QProcess::FailedToStart) {
++                    pProcess->deleteLater();
++                    m_ledFxToggleRunning = false;
++                }
++            });
++    pProcess->start(QStringLiteral("/bin/sh"),
++            {QStringLiteral("-c"), script});
++}
++
+ bool LibraryControl::isUsbInUse(int usbIndex) const {
+     // A deck blocks the eject only while it is actively playing a track from
+     // this stick. Paused decks with a loaded track do not hold it (mirroring
+diff --git a/src/library/librarycontrol.h b/src/library/librarycontrol.h
+index 94af814..b0232f5 100644
+--- a/src/library/librarycontrol.h
++++ b/src/library/librarycontrol.h
+@@ -195,6 +195,13 @@ class LibraryControl : public QObject {
+     void disarmSystemMenu();
+     void triggerPowerOff();
+ 
++    // Pioneered LEDS button (settings menu): ledfx_status is 1 while the
++    // ledfx systemd service is active and the network is up, 0 otherwise,
++    // so the skin can paint the button green or red. Only polled while the
++    // settings panel is open; a tap starts or stops the service.
++    void slotPollLedFx();
++    void slotLedFxToggle(double v);
++
+     // Pioneered JOG SENSITIVITY page (a sub-page of the settings menu, the
+     // same shape as the Wi-Fi and update pages). The minus/plus buttons step
+     // the nudge sensitivity and apply it to the decks immediately, so it can
+@@ -268,6 +275,13 @@ class LibraryControl : public QObject {
+     QTimer m_disarmTimer;
+     bool m_powerOffTriggered = false;
+ 
++    // LEDS button state (see slotPollLedFx above).
++    std::unique_ptr<ControlObject> m_pLedFxStatus;
++    std::unique_ptr<ControlPushButton> m_pLedFxToggle;
++    QTimer m_ledFxPollTimer;
++    bool m_ledFxPollRunning = false;
++    bool m_ledFxToggleRunning = false;
++
+     Library* m_pLibrary;
+ 
+     // Simulate pressing a key on the keyboard
