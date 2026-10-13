@@ -1,0 +1,45 @@
+Description: Fix segfault importing a rekordbox main cue
+ readAnalyze() set the first memory cue as the main cue, then looked the
+ MainCue object up and called setLabel() on it without a null check.
+ Track::setMainCuePosition() returns early when the stored position is
+ already equal, so a track can hold a main cue position with no MainCue
+ object, and findCueByType() then returns null. Mixxx crashed (SIGSEGV
+ in Cue::setLabel, this=0x0) while browsing a rekordbox playlist on
+ 2026-10-13. The importer now clears and re-sets the position to force
+ the MainCue to exist, skips the label/colour if it still doesn't, and
+ only applies the colour when the cue has one.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -1302,8 +1302,27 @@
+                 // Set first chronological memory cue as Mixxx MainCue
+                 track->setMainCuePosition(memoryCueOrLoop.startPosition);
+                 CuePointer pMainCue = track->findCueByType(mixxx::CueType::MainCue);
+-                pMainCue->setLabel(memoryCueOrLoop.comment);
+-                pMainCue->setColor(*memoryCueOrLoop.color);
++                if (!pMainCue) {
++                    // XDJ: setMainCuePosition() returns early without creating
++                    // the MainCue object when the stored position is already
++                    // equal, so the track can end up with a main cue position
++                    // but no MainCue. Upstream then dereferenced the null
++                    // pointer here and Mixxx segfaulted while browsing.
++                    // Clearing and setting the position again forces the
++                    // MainCue to be created.
++                    track->setMainCuePosition(mixxx::audio::kInvalidFramePos);
++                    track->setMainCuePosition(memoryCueOrLoop.startPosition);
++                    pMainCue = track->findCueByType(mixxx::CueType::MainCue);
++                }
++                if (pMainCue) {
++                    pMainCue->setLabel(memoryCueOrLoop.comment);
++                    if (memoryCueOrLoop.color) {
++                        pMainCue->setColor(*memoryCueOrLoop.color);
++                    }
++                } else {
++                    qWarning() << "Rekordbox: no main cue after setting its position for"
++                               << track->getLocation();
++                }
+                 mainCueFound = true;
+             } else {
+                 // Mixxx v2.4 will feature multiple loops, so these saved here will be usable

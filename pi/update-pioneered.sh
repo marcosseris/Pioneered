@@ -124,6 +124,26 @@ install -m 644 "$SKIN_SRC/pi/usb-mount@.service" /etc/systemd/system/
 udevadm control --reload
 systemctl daemon-reload
 
+# --- Install the Mixxx watchdog ------------------------------------------------
+# Relaunches Mixxx if it crashes (r43). The Openbox autostart used to start
+# Mixxx once with a bare "mixxx &"; swap that line for the watchdog, which
+# starts Mixxx itself. Takes effect from the next login/reboot.
+echo "==> Installing the Mixxx watchdog"
+install -m 755 "$SKIN_SRC/pi/mixxx-watchdog.sh" /usr/local/bin/
+AUTOSTART="$SKIN_HOME/.config/openbox/autostart"
+if [[ -f "$AUTOSTART" ]]; then
+    if grep -q 'mixxx-watchdog\.sh' "$AUTOSTART"; then
+        echo "    autostart already uses the watchdog"
+    elif grep -Eq '^[[:space:]]*mixxx[[:space:]]*&[[:space:]]*$' "$AUTOSTART"; then
+        sed -i -E 's#^[[:space:]]*mixxx[[:space:]]*&[[:space:]]*$#/usr/local/bin/mixxx-watchdog.sh \&#' "$AUTOSTART"
+        echo "    autostart now starts Mixxx through the watchdog"
+    else
+        echo "    WARNING: no 'mixxx &' line in $AUTOSTART; watchdog not enabled" >&2
+    fi
+else
+    echo "    WARNING: $AUTOSTART not found; watchdog not enabled" >&2
+fi
+
 # --- Install this script ------------------------------------------------------
 # So /usr/local/bin/update-pioneered.sh is always the newest one, and the
 # settings menu's UPDATE button has a fixed path to call.

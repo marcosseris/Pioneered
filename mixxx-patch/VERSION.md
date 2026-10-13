@@ -952,3 +952,15 @@
     last, after `rmx.patch`. Skin side: `settings.xml` (the WI-FI row
     becomes horizontal, WI-FI | LEDS, so the panel keeps its 418 px height),
     `style.qss` (`#SettingsLedFx`, red / `[value="1"]` green).
+39. `rekordbox-main-cue-crash.patch` (added 2026-10-13) — fixes an upstream
+    2.5.0 segfault in `readAnalyze()`. The first memory cue becomes the main
+    cue via `Track::setMainCuePosition()`, which returns early without
+    creating a MainCue object when the stored position already matches, and
+    the importer then called `setLabel()` on the null result of
+    `findCueByType(MainCue)`. Mixxx died in `Cue::setLabel (this=0x0)` from
+    `RekordboxPlaylistModel::getTrack` while browsing on 2026-10-13. If no
+    MainCue exists after setting the position, the importer now sets it to
+    invalid and back to force its creation, skips label/colour if it is still
+    missing, and applies the colour only when the cue has one. Touches
+    `src/library/rekordbox/rekordboxfeature.cpp` only; applied last, after
+    `ledfx-status.patch`.
