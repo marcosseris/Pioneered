@@ -6,10 +6,16 @@
 # Mixxx owns the audio and the CPU: LedFx runs niced, batch-scheduled, on one
 # core, with idle I/O and a memory cap, so a busy effect can never starve the
 # decks.
+#
+# Never started at boot: the room lights stay off until the settings menu's
+# LEDS button starts this unit ("sudo -n systemctl start ledfx"). There is
+# deliberately no [Install] section, so it cannot be enabled by accident.
+# Ordered after network.target only, never network-online.target: with no
+# Wi-Fi, a start job waiting for "online" can wait up to NetworkManager's 60 s
+# timeout. LedFx copes with unreachable WLED devices on its own.
 [Unit]
 Description=LedFx audio-reactive LEDs
-Wants=network-online.target
-After=network-online.target sound.target
+After=network.target sound.target
 
 [Service]
 Type=simple
@@ -22,6 +28,3 @@ CPUSchedulingPolicy=batch
 IOSchedulingClass=idle
 CPUAffinity=3
 MemoryMax=400M
-
-[Install]
-WantedBy=multi-user.target

@@ -964,3 +964,20 @@
     missing, and applies the colour only when the cue has one. Touches
     `src/library/rekordbox/rekordboxfeature.cpp` only; applied last, after
     `ledfx-status.patch`.
+40. `screen-sleep.patch` (added 2026-11-27, r44) — the display switches off
+    after `[Pioneered] ScreenSleepMinutes` (mixxx.cfg, default 5, 0 = never)
+    with no touch, key, controller input or playing deck. New
+    `mixxx::ScreenSleep` (`src/util/screensleep.{h,cpp}`, added to
+    CMakeLists), owned by `MixxxMainWindow` (created after the keyboard event
+    filter, reset first in the destructor): an application-wide event filter
+    plus a 250 ms poll of `[ChannelN],play` and of a controller-activity
+    timestamp that `Controller::triggerActivity()` stores in a relaxed atomic
+    from the controller thread. The touch that wakes a dark screen is
+    swallowed (press through release + 400 ms grace, capped at 5 s).
+    Display control is a detached `/bin/sh -c xset ...`: DPMS force off/on
+    when the server has DPMS, else `xset s activate` / `s reset` blanking.
+    Startup zeroes X's own screensaver and DPMS timers. Needs the r44
+    updater's `/etc/X11/xorg.conf.d/10-blanking.conf` (DPMS loaded, timers
+    0) for a real panel power-down; raspi-config's version disables the
+    DPMS extension. Applied last, after `rekordbox-main-cue-crash.patch`.
+    Same release: `rmx.patch` default drum level 80 -> 30 (`kDefaultLevel`).

@@ -5,10 +5,12 @@
 #
 # Run from a checkout/copy of the pi/ directory (it installs the files next to
 # it). It sets up:
-#   * the ALSA loopback (snd-aloop as card 10, "Loopback"), loaded at boot;
+#   * the ALSA loopback (snd-aloop as card 10, "Loopback"), loaded at boot,
+#     and the "ledfx_in" PCM LedFx captures through (2 ch -> mono);
 #   * LedFx in its own venv at /opt/ledfx (built with uv), so the system
 #     Python's packages are never touched;
-#   * the "ledfx" systemd service (web UI on port 8888, niced, one core);
+#   * the "ledfx" systemd service (web UI on port 8888, niced, one core),
+#     NOT started at boot: the room lights stay off until the LEDS button;
 #   * a passwordless sudo rule so the settings menu's LEDS button can start
 #     and stop the service.
 # Mixxx's Booth output and the LedFx devices are then set by hand once; the
@@ -34,6 +36,7 @@ echo "==> ALSA loopback (snd-aloop, card 10)"
 install -m 644 "$HERE/ledfx-snd-aloop.conf" /etc/modprobe.d/ledfx-snd-aloop.conf
 echo snd-aloop > /etc/modules-load.d/ledfx-snd-aloop.conf
 modprobe snd-aloop
+install -m 644 "$HERE/ledfx-alsa.conf" /etc/alsa/conf.d/60-ledfx.conf
 if ! grep -q '^10 \[Loopback' /proc/asound/cards; then
     echo "WARNING: Loopback is not card 10 (was snd-aloop already loaded with" \
          "other options?). Reboot and re-check 'aplay -l'." >&2
@@ -41,6 +44,8 @@ fi
 
 # --- LedFx -------------------------------------------------------------------
 echo "==> Build dependencies"
+# A stale package index points at versions the mirror has since dropped (404).
+apt-get update
 apt-get install -y --no-install-recommends \
     curl ca-certificates build-essential python3-dev \
     libportaudio2 portaudio19-dev libasound2-dev
@@ -67,7 +72,11 @@ chmod 644 /etc/systemd/system/ledfx.service
 # Capture devices are group "audio"; the login user normally is in it already.
 usermod -aG audio "$LEDFX_USER"
 systemctl daemon-reload
-systemctl enable ledfx
+# Never started at boot: the LEDS button in the settings menu starts it. An
+# older install enabled it (WantedBy=multi-user.target); drop that link. It is
+# started now only so the web UI is up for the setup steps below.
+rm -f /etc/systemd/system/multi-user.target.wants/ledfx.service
+systemctl daemon-reload
 systemctl restart ledfx
 
 # --- LEDS button -------------------------------------------------------------
@@ -96,9 +105,12 @@ One-time setup left:
        Booth = "Loopback: PCM (hw:10,0)", channels 1-2. Leave the DDJ-400 as
        the clock reference and the sample rate at 44100 Hz. Apply.
   2. From a computer on the same network open  http://$HOST.local:8888
-       Settings > Audio Device: the Loopback capture device (hw:10,1)
+       Settings > Audio Device: "ALSA: ledfx_in" (NOT the raw Loopback
+       devices: those open mono and Mixxx's Booth then fails with
+       "invalid number of channels")
        Devices > Add Device > WLED (found automatically, or enter its IP)
        Pick an effect for the device.
-  3. The settings menu's LEDS button (green = running and online) needs a
-     Pioneered Mixxx build with ledfx-status.patch.
+  3. LedFx does not start at boot: the room lights stay off until the
+     settings menu's LEDS button is pressed (green = running and online).
+     It needs a Pioneered Mixxx build with ledfx-status.patch.
 EOF

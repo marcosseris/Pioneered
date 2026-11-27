@@ -161,7 +161,13 @@ auto-mount layer (`pi/`), and prebuilt arm64 packages.
   * **LEDS** sits beside WI-FI and shows the room lights at a glance:
     **green** while the LedFx service is running and the Pi is on a network,
     **red** when it is off or offline. Tap it to stop LedFx when green, or
-    start it when red (see *Room LEDs* below)
+    start it when red (see *Room LEDs* below). LedFx is off after every
+    boot, so the lights only react to the music once you tap it
+* **Screen sleep**: after 5 minutes with no touch, no DDJ-400 input and no
+  deck playing, the display switches off; a touch or any control on the
+  DDJ-400 wakes it, and the waking touch presses nothing. A playing deck
+  keeps it on. `[Pioneered] ScreenSleepMinutes` in `mixxx.cfg` sets the time
+  (0 = never)
 
 ## Requirements
 
@@ -278,10 +284,13 @@ Then, once:
    `Loopback: PCM (hw:10,0)`, channels 1-2. Keep the DDJ-400 as the clock
    reference.
 2. On a laptop open `http://<pi-hostname>.local:8888`. Set *Settings → Audio
-   Device* to the Loopback capture device (`hw:10,1`), add your WLED
-   device(s) and pick an effect.
+   Device* to **`ALSA: ledfx_in`**, add your WLED device(s) and pick an
+   effect. Don't pick the raw Loopback devices: LedFx opens them mono, and
+   Mixxx's 2-channel Booth is then refused ("invalid number of channels").
 
-LedFx runs niced on a single core so it cannot take CPU from the decks. If
+LedFx does **not** start at boot: the room lights stay off until you tap
+**LEDS** in the settings menu (tap again to turn them off). It runs niced on
+a single core so it cannot take CPU from the decks. If
 the master ever clicks after you assign Booth, unassign it. A cheap USB
 line-in fed from the DDJ-400's master out works as a capture source instead,
 with no change to Mixxx. Details are in `docs/pi-deploy.md`.

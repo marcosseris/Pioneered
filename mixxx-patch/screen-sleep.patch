@@ -1,0 +1,435 @@
+Description: Screen sleeps after 5 idle minutes; any touch or controller input wakes it
+ The XDJ400's touch screen used to stay lit all night. Mixxx now switches
+ the display off after [Pioneered] ScreenSleepMinutes (mixxx.cfg, default 5,
+ 0 = never) with no touch, no key, no controller input and no deck playing.
+ A playing deck counts as activity, so the screen never goes dark mid-set.
+ .
+ New class mixxx::ScreenSleep (src/util/screensleep.{h,cpp}), owned by
+ MixxxMainWindow. It is an application-wide event filter (touch, mouse,
+ keys) plus a 250 ms poll of [ChannelN],play and of a controller-activity
+ timestamp. Controller::triggerActivity(), which runs on the controller
+ thread for every incoming message, stores that timestamp in a relaxed
+ atomic; nothing crosses threads but the integer.
+ .
+ Waking: X switches the display back on by itself at any input, and
+ controller input wakes it through the poll. The touch that wakes a dark
+ screen is swallowed (press through release, plus a 400 ms grace for
+ synthesized mouse events, capped at 5 s), so tapping a dark screen never
+ presses the button under the finger.
+ .
+ Display control goes through detached "/bin/sh -c xset ..." processes so
+ the GUI thread never waits. DPMS (a real panel power-down) is used when
+ the X server has the extension; Raspberry Pi OS disables it whenever
+ raspi-config's screen blanking is off, so pi/update-pioneered.sh rewrites
+ /etc/X11/xorg.conf.d/10-blanking.conf to load DPMS with every X timer at 0.
+ Without DPMS it falls back to the X screen saver's blanking (black, but
+ the backlight stays on). At startup X's own blanking and DPMS timers are
+ zeroed, so only Mixxx decides when the screen sleeps. The DDJ-400 sends no
+ MIDI while untouched (checked with aseqdump), so an idle controller does
+ not hold the screen on.
+Author: Pioneered CI <pioneered-build@localhost>
+Forwarded: no
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 60989c4..60c694a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1195,6 +1195,7 @@ add_library(mixxx-lib STATIC EXCLUDE_FROM_ALL
+   src/util/sandbox.cpp
+   src/util/screensaver.cpp
+   src/util/screensavermanager.cpp
++  src/util/screensleep.cpp
+   src/util/semanticversion.cpp
+   src/util/stat.cpp
+   src/util/statmodel.cpp
+@@ -1468,6 +1469,7 @@ target_precompile_headers(mixxx-lib PUBLIC
+   src/util/scopedoverridecursor.h
+   src/util/screensaver.h
+   src/util/screensavermanager.h
++  src/util/screensleep.h
+   src/util/semanticversion.h
+   src/util/singleton.h
+   src/util/span.h
+diff --git a/src/controllers/controller.cpp b/src/controllers/controller.cpp
+index f7bc481..328fb73 100644
+--- a/src/controllers/controller.cpp
++++ b/src/controllers/controller.cpp
+@@ -7,6 +7,7 @@
+ #include "moc_controller.cpp"
+ #include "util/cmdlineargs.h"
+ #include "util/screensaver.h"
++#include "util/screensleep.h"
+ 
+ namespace {
+ QString loggingCategoryPrefix(const QString& deviceName) {
+@@ -111,6 +112,9 @@ void Controller::send(const QList<int>& data, unsigned int length) {
+ }
+ 
+ void Controller::triggerActivity() {
++    // Pioneered screen sleep: any controller input keeps the screen on and
++    // wakes it. A relaxed atomic store, cheap enough for every message.
++    mixxx::ScreenSleep::noteControllerActivity();
+     // Inhibit Updates for 1000 milliseconds
+     if (m_userActivityInhibitTimer.elapsed() > 1000) {
+         mixxx::ScreenSaverHelper::triggerUserActivity();
+diff --git a/src/mixxxmainwindow.cpp b/src/mixxxmainwindow.cpp
+index 9cd0271..317b40d 100644
+--- a/src/mixxxmainwindow.cpp
++++ b/src/mixxxmainwindow.cpp
+@@ -51,6 +51,7 @@
+ #include "util/desktophelper.h"
+ #include "util/sandbox.h"
+ #include "util/scopedoverridecursor.h"
++#include "util/screensleep.h"
+ #include "util/timer.h"
+ #include "util/versionstore.h"
+ #include "waveform/guitick.h"
+@@ -214,6 +215,10 @@ void MixxxMainWindow::initialize() {
+     // This allows us to turn off tooltips.
+     installEventFilter(m_pCoreServices->getKeyboardEventFilter().get());
+ 
++    // Pioneered: switch the display off after ScreenSleepMinutes without
++    // touch, controller input or a playing deck; the next input wakes it.
++    m_pScreenSleep = std::make_unique<mixxx::ScreenSleep>(pConfig);
++
+     auto pPlayerManager = m_pCoreServices->getPlayerManager();
+     DEBUG_ASSERT(pPlayerManager);
+     const QStringList visualGroups = pPlayerManager->getVisualPlayerGroups();
+@@ -436,6 +441,9 @@ MixxxMainWindow::~MixxxMainWindow() {
+     Timer t("~MixxxMainWindow");
+     t.start();
+ 
++    // Before the decks it polls go away; wakes the display if it is asleep.
++    m_pScreenSleep.reset();
++
+     // Save the current window state (position, maximized, etc)
+     // Note(ronso0): Unfortunately saveGeometry() also stores the fullscreen state.
+     // On next start restoreGeometry would enable fullscreen mode even though that
+diff --git a/src/mixxxmainwindow.h b/src/mixxxmainwindow.h
+index 1c67357..55bcad9 100644
+--- a/src/mixxxmainwindow.h
++++ b/src/mixxxmainwindow.h
+@@ -26,6 +26,8 @@ namespace skin {
+ class SkinLoader;
+ }
+ 
++class ScreenSleep;
++
+ #ifdef __ENGINEPRIME__
+ class LibraryExporter;
+ #endif
+@@ -147,6 +149,8 @@ class MixxxMainWindow : public QMainWindow {
+     // Library exporter
+     std::unique_ptr<mixxx::LibraryExporter> m_pLibraryExporter;
+ #endif
++    // Pioneered: display off after a few idle minutes (util/screensleep.h).
++    std::unique_ptr<mixxx::ScreenSleep> m_pScreenSleep;
+ 
+     mixxx::preferences::Tooltips m_toolTipsCfg;
+ 
+diff --git a/src/util/screensleep.cpp b/src/util/screensleep.cpp
+new file mode 100644
+index 0000000..a6e6f95
+--- /dev/null
++++ b/src/util/screensleep.cpp
+@@ -0,0 +1,235 @@
++#include "util/screensleep.h"
++
++#include <QCoreApplication>
++#include <QEvent>
++#include <QProcess>
++#include <QStringList>
++#include <QtDebug>
++#include <chrono>
++
++#include "control/controlobject.h"
++#include "mixer/playermanager.h"
++#include "moc_screensleep.cpp"
++
++namespace mixxx {
++
++namespace {
++
++const ConfigKey kScreenSleepMinutesKey(
++        QStringLiteral("[Pioneered]"), QStringLiteral("ScreenSleepMinutes"));
++constexpr int kDefaultScreenSleepMinutes = 5;
++
++// Often enough that a jog touch wakes the screen without a noticeable lag;
++// each poll is a handful of control reads.
++constexpr int kPollIntervalMs = 250;
++
++// After the waking press is released, keep swallowing for a moment: Qt can
++// deliver a touch both as touch events and as synthesized mouse events, and
++// a second finger landing during the wake must not reach the skin either.
++constexpr qint64 kSwallowGraceMs = 400;
++// Safety net: never swallow input for longer than this, even if the
++// release of the waking press is somehow never seen.
++constexpr qint64 kSwallowMaxMs = 5000;
++
++// X commands, run through /bin/sh. DPMS really powers the panel down, but
++// Raspberry Pi OS ships the DPMS extension disabled when "screen blanking"
++// is off in raspi-config (/etc/X11/xorg.conf.d/10-blanking.conf; the
++// Pioneered updater re-enables it with every X timer at 0). Without it,
++// fall back to the X screen saver's blanking: black, backlight still on.
++// Either way X itself switches the display back on at the next input.
++//
++// Startup: X never blanks or powers down on its own timers; Mixxx decides.
++const QString kXsetInit = QStringLiteral(
++        "xset s off; xset s noexpose; xset dpms 0 0 0 2>/dev/null; true");
++const QString kXsetSleep = QStringLiteral(
++        "if xset q 2>/dev/null | grep -q '^ *DPMS is'; then "
++        "xset +dpms; xset dpms 0 0 0; xset dpms force off; "
++        "else xset s activate; fi");
++const QString kXsetWake = QStringLiteral(
++        "xset dpms force on 2>/dev/null; xset s reset");
++
++enum class InputKind {
++    None,
++    Press,
++    Release,
++    Move,
++};
++
++InputKind classify(QEvent::Type type) {
++    switch (type) {
++    case QEvent::MouseButtonPress:
++    case QEvent::MouseButtonDblClick:
++    case QEvent::TouchBegin:
++    case QEvent::TabletPress:
++    case QEvent::KeyPress:
++        return InputKind::Press;
++    case QEvent::MouseButtonRelease:
++    case QEvent::TouchEnd:
++    case QEvent::TouchCancel:
++    case QEvent::TabletRelease:
++    case QEvent::KeyRelease:
++        return InputKind::Release;
++    case QEvent::MouseMove:
++    case QEvent::TouchUpdate:
++    case QEvent::TabletMove:
++    case QEvent::Wheel: // no release follows; activity only
++        return InputKind::Move;
++    default:
++        return InputKind::None;
++    }
++}
++
++} // namespace
++
++std::atomic<qint64> ScreenSleep::s_lastControllerActivityMs{0};
++
++qint64 ScreenSleep::nowMs() {
++    return std::chrono::duration_cast<std::chrono::milliseconds>(
++            std::chrono::steady_clock::now().time_since_epoch())
++            .count();
++}
++
++void ScreenSleep::noteControllerActivity() {
++    s_lastControllerActivityMs.store(nowMs(), std::memory_order_relaxed);
++}
++
++ScreenSleep::ScreenSleep(UserSettingsPointer pConfig, QObject* pParent)
++        : QObject(pParent),
++          m_timeoutMs(0),
++          m_lastActivityMs(nowMs()),
++          m_sleptAtMs(0),
++          m_swallowStartMs(0),
++          m_swallowUntilMs(0),
++          m_asleep(false),
++          m_swallowing(false),
++          m_releaseSeen(false) {
++    if (!pConfig->exists(kScreenSleepMinutesKey)) {
++        // Written out so the setting can be found (and changed) in mixxx.cfg.
++        pConfig->setValue(kScreenSleepMinutesKey, kDefaultScreenSleepMinutes);
++    }
++    const int minutes = pConfig->getValue(
++            kScreenSleepMinutesKey, kDefaultScreenSleepMinutes);
++    if (minutes <= 0) {
++        qInfo() << "Screen sleep: off ([Pioneered] ScreenSleepMinutes =" << minutes << ")";
++        return;
++    }
++    m_timeoutMs = static_cast<qint64>(minutes) * 60 * 1000;
++    qInfo() << "Screen sleep: display off after" << minutes << "min idle";
++
++    // Mixxx alone decides when the screen sleeps: stop the X server's own
++    // blanking and DPMS timers, which know nothing about the controller or
++    // a playing deck.
++    runXset(kXsetInit);
++
++    QCoreApplication::instance()->installEventFilter(this);
++    m_pollTimer.setInterval(kPollIntervalMs);
++    connect(&m_pollTimer, &QTimer::timeout, this, &ScreenSleep::slotPoll);
++    m_pollTimer.start();
++}
++
++ScreenSleep::~ScreenSleep() {
++    if (m_asleep) {
++        // Never leave the screen dark behind a closing Mixxx.
++        runXset(kXsetWake);
++    }
++}
++
++bool ScreenSleep::anyDeckPlaying() const {
++    const int numDecks = static_cast<int>(PlayerManager::numDecks());
++    for (int i = 0; i < numDecks; ++i) {
++        if (ControlObject::get(ConfigKey(PlayerManager::groupForDeck(i),
++                    QStringLiteral("play"))) > 0.0) {
++            return true;
++        }
++    }
++    return false;
++}
++
++void ScreenSleep::noteActivity() {
++    m_lastActivityMs = nowMs();
++}
++
++void ScreenSleep::slotPoll() {
++    const qint64 now = nowMs();
++    const qint64 controllerMs =
++            s_lastControllerActivityMs.load(std::memory_order_relaxed);
++    if (controllerMs > m_lastActivityMs) {
++        m_lastActivityMs = controllerMs;
++    }
++    if (anyDeckPlaying()) {
++        m_lastActivityMs = now;
++    }
++    if (m_asleep) {
++        if (m_lastActivityMs > m_sleptAtMs) {
++            // Controller input or a deck started: the controller action
++            // itself goes through, there is nothing on screen to protect.
++            wakeScreen();
++        }
++        return;
++    }
++    if (now - m_lastActivityMs >= m_timeoutMs) {
++        sleepScreen();
++    }
++}
++
++void ScreenSleep::sleepScreen() {
++    m_asleep = true;
++    m_sleptAtMs = nowMs();
++    qInfo() << "Screen sleep: display off";
++    runXset(kXsetSleep);
++}
++
++void ScreenSleep::wakeScreen() {
++    if (!m_asleep) {
++        return;
++    }
++    m_asleep = false;
++    noteActivity();
++    qInfo() << "Screen sleep: display on";
++    runXset(kXsetWake);
++}
++
++void ScreenSleep::runXset(const QString& script) {
++    // Detached: xset returns at once, and the GUI thread never waits on it.
++    QProcess::startDetached(QStringLiteral("/bin/sh"),
++            {QStringLiteral("-c"), script});
++}
++
++bool ScreenSleep::eventFilter(QObject* pObj, QEvent* pEvent) {
++    const InputKind kind = classify(pEvent->type());
++    if (kind == InputKind::None) {
++        return QObject::eventFilter(pObj, pEvent);
++    }
++    noteActivity();
++
++    if (m_asleep) {
++        // X switches the display back on by itself at any input; keep our
++        // state in step with it.
++        wakeScreen();
++        if (kind == InputKind::Press) {
++            // The touch that woke the screen must not press the button
++            // that happened to be under the finger.
++            m_swallowing = true;
++            m_releaseSeen = false;
++            m_swallowStartMs = nowMs();
++            m_swallowUntilMs = m_swallowStartMs + kSwallowGraceMs;
++            return true;
++        }
++    }
++
++    if (m_swallowing) {
++        const qint64 now = nowMs();
++        if ((m_releaseSeen && now >= m_swallowUntilMs) ||
++                now - m_swallowStartMs >= kSwallowMaxMs) {
++            m_swallowing = false;
++        } else {
++            if (kind == InputKind::Release) {
++                m_releaseSeen = true;
++            }
++            return true;
++        }
++    }
++    return QObject::eventFilter(pObj, pEvent);
++}
++
++} // namespace mixxx
+diff --git a/src/util/screensleep.h b/src/util/screensleep.h
+new file mode 100644
+index 0000000..63b2d12
+--- /dev/null
++++ b/src/util/screensleep.h
+@@ -0,0 +1,59 @@
++#pragma once
++
++#include <QObject>
++#include <QTimer>
++#include <atomic>
++
++#include "preferences/usersettings.h"
++
++namespace mixxx {
++
++/// Pioneered screen sleep: the XDJ400 runs on a Pi with a touch screen that
++/// is otherwise lit all night. After ScreenSleepMinutes (mixxx.cfg
++/// [Pioneered], default 5, 0 = never) without a touch, without controller
++/// input and without any deck playing, the display is switched off through
++/// X DPMS. Any touch, key or controller input switches it back on.
++///
++/// The touch that wakes the screen is swallowed (press through release), so
++/// tapping a dark screen can never press whatever button was under the
++/// finger.
++///
++/// Controller input arrives on the controller thread, which only stores a
++/// timestamp (noteControllerActivity); the GUI-thread poll timer reads it.
++class ScreenSleep : public QObject {
++    Q_OBJECT
++  public:
++    explicit ScreenSleep(UserSettingsPointer pConfig, QObject* pParent = nullptr);
++    ~ScreenSleep() override;
++
++    /// Thread-safe. Called by Controller::triggerActivity().
++    static void noteControllerActivity();
++
++  protected:
++    bool eventFilter(QObject* pObj, QEvent* pEvent) override;
++
++  private slots:
++    void slotPoll();
++
++  private:
++    bool anyDeckPlaying() const;
++    void noteActivity();
++    void sleepScreen();
++    void wakeScreen();
++    static void runXset(const QString& script);
++    static qint64 nowMs();
++
++    static std::atomic<qint64> s_lastControllerActivityMs;
++
++    QTimer m_pollTimer;
++    qint64 m_timeoutMs;
++    qint64 m_lastActivityMs;
++    qint64 m_sleptAtMs;
++    qint64 m_swallowStartMs;
++    qint64 m_swallowUntilMs;
++    bool m_asleep;
++    bool m_swallowing;
++    bool m_releaseSeen;
++};
++
++} // namespace mixxx

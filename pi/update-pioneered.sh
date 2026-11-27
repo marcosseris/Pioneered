@@ -144,6 +144,48 @@ else
     echo "    WARNING: $AUTOSTART not found; watchdog not enabled" >&2
 fi
 
+# --- Refresh the LedFx service ---------------------------------------------------
+# Only on units where pi/ledfx-install.sh has been run. From r44 LedFx no
+# longer starts at boot (the room lights stay off until the LEDS button) and
+# no longer waits for network-online.target, which with no Wi-Fi could hold
+# its start for up to NetworkManager's 60 s timeout. Refresh the unit, drop the old
+# boot-time link, and install the ledfx_in capture PCM. A running LedFx is
+# left running; it simply does not come back after the reboot.
+if [[ -f /etc/systemd/system/ledfx.service && -f "$SKIN_SRC/pi/ledfx.service" ]]; then
+    echo "==> Refreshing the LedFx service (off at boot, LEDS button starts it)"
+    LEDFX_USER="$(sed -n 's/^User=//p' /etc/systemd/system/ledfx.service | head -1)"
+    LEDFX_USER="${LEDFX_USER:-$SKIN_USER}"
+    sed "s/@USER@/$LEDFX_USER/" "$SKIN_SRC/pi/ledfx.service" > /etc/systemd/system/ledfx.service
+    chmod 644 /etc/systemd/system/ledfx.service
+    rm -f /etc/systemd/system/multi-user.target.wants/ledfx.service
+    if [[ -f "$SKIN_SRC/pi/ledfx-alsa.conf" && -d /etc/alsa/conf.d ]]; then
+        install -m 644 "$SKIN_SRC/pi/ledfx-alsa.conf" /etc/alsa/conf.d/60-ledfx.conf
+    fi
+    systemctl daemon-reload
+fi
+
+# --- Screen sleep: let X power the display down -----------------------------------
+# r44: Mixxx switches the display off after a few idle minutes using X DPMS.
+# raspi-config's "screen blanking off" writes 10-blanking.conf with the DPMS
+# extension disabled, which leaves Mixxx only a black (still backlit) blank.
+# Load DPMS, but keep every X timer at 0 so X never blanks or powers down by
+# itself: Mixxx decides. Takes effect at the next X start (the reboot).
+echo "==> X display power management (for screen sleep)"
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/10-blanking.conf <<'XCONF'
+# Pioneered (pi/update-pioneered.sh): DPMS is loaded so Mixxx can switch the
+# display off after a few idle minutes, but X never blanks or powers down on
+# its own timers. The idle time is [Pioneered] ScreenSleepMinutes in
+# ~/.mixxx/mixxx.cfg (0 = never).
+Section "ServerLayout"
+    Identifier "ServerLayout0"
+    Option "StandbyTime" "0"
+    Option "SuspendTime" "0"
+    Option "OffTime"     "0"
+    Option "BlankTime"   "0"
+EndSection
+XCONF
+
 # --- Install this script ------------------------------------------------------
 # So /usr/local/bin/update-pioneered.sh is always the newest one, and the
 # settings menu's UPDATE button has a fixed path to call.

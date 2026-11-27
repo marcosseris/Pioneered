@@ -212,7 +212,7 @@ index 0000000..3d56fa2
 +constexpr std::array<double, EngineRmx::kNumRates> kRateBeats = {
 +        0.0, 1.0, 0.5, 0.25, 0.125, 0.0625};
 +constexpr int kDefaultRate = 3; // 1/4
-+constexpr double kDefaultLevel = 80.0;
++constexpr double kDefaultLevel = 30.0;
 +constexpr double kLevelStep = 10.0;
 +
 +// How long a pad stays lit after a hit.

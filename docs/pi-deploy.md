@@ -126,8 +126,16 @@ Files in `pi/`, installed by `sudo pi/ledfx-install.sh` (safe to re-run):
 - LedFx goes in a venv at `/opt/ledfx`, built with uv on trixie's Python 3.13
   (LedFx 2.2 supports 3.11-3.14).
 - `pi/ledfx.service` -> `/etc/systemd/system/ledfx.service` with `User=` set
-  to the login user. Web UI on `0.0.0.0:8888`. `Nice=15`, batch scheduling,
+  to the login user. **Not enabled**: it never starts at boot, only from the
+  LEDS button (no `[Install]` section). Ordered after `network.target`, not
+  `network-online.target`, so a start with no Wi-Fi is never held for
+  NetworkManager-wait-online. Web UI on `0.0.0.0:8888`. `Nice=15`, batch scheduling,
   `CPUAffinity=3`, idle I/O, `MemoryMax=400M`: Mixxx always wins.
+- `pi/ledfx-alsa.conf` -> `/etc/alsa/conf.d/60-ledfx.conf`: the `ledfx_in`
+  PCM. snd-aloop locks the second opener to the first one's parameters, and
+  LedFx opens its input mono, so with LedFx on raw `hw:10,1` Mixxx's Booth
+  is refused with "invalid number of channels". `ledfx_in` is a plug that
+  holds the loopback at 2 ch / 44100 Hz and downmixes for LedFx.
 - `/etc/sudoers.d/pioneered-ledfx`: passwordless
   `systemctl start|stop ledfx` for the LEDS button (checked with `visudo -c`).
 
@@ -136,8 +144,9 @@ One-time manual steps:
    `Loopback: PCM (hw:10,0)` ch 1-2. Keep 44100 Hz (the DDJ-400's only rate)
    and the DDJ-400 as clock reference.
 2. From a laptop: `http://<hostname>.local:8888` > Settings > Audio Device =
-   the Loopback capture device (`hw:10,1`). Add the WLED device(s) and assign
-   effects. LedFx keeps its config in `~/.ledfx/` of the login user.
+   `ALSA: ledfx_in`. Add the WLED device(s) and assign effects. LedFx keeps
+   its config in `~/.ledfx/` of the login user. (LedFx is only running
+   while LEDS is green; the installer starts it once for this step.)
 
 LEDS button (settings menu, beside WI-FI; needs `ledfx-status.patch`):
 green = service active and the network is up (full or LAN-only), red =
@@ -147,7 +156,7 @@ It is polled only while the settings panel is open.
 Checks:
 - `aplay -l` shows `card 10: Loopback`, and the DDJ-400's card number has
   not changed.
-- While a track plays: `arecord -D hw:10,1 -f S16_LE -r 44100 -c 2 -d 5 /tmp/t.wav`
+- While a track plays: `arecord -D ledfx_in -f S16_LE -r 44100 -c 2 -d 5 /tmp/t.wav`
   records the master mix.
 - `systemctl status ledfx`, `journalctl -u ledfx -f`.
 

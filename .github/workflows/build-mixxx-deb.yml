@@ -63,6 +63,7 @@ jobs:
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/rmx.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/ledfx-status.patch"
           patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/rekordbox-main-cue-crash.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/mixxx-patch/screen-sleep.patch"
           DEBEMAIL=pioneered-build@localhost DEBFULLNAME="Pioneered CI" \
             dch --local "+usbbrowse.r${GITHUB_RUN_NUMBER}." "Pioneered USB browse/eject patch build ${GITHUB_RUN_NUMBER}"
 
